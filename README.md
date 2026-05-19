@@ -1,6 +1,6 @@
 # Spotify Practice Tool 🎸
 
-En nettapp for musikere som vil øve mer effektivt med Spotify. Registrer **partier** (bookmarks) i låter med start- og sluttidspunkt, og la appen loope dem automatisk – uten manuell spoling.
+En nettapp for musikere som vil øve mer effektivt med Spotify. Registrer **partier** (bookmarks) i låter med start- og sluttidspunkt, og la appen loope dem automatisk, uten manuell spoling.
 
 ## Funksjoner
 
