@@ -1,0 +1,265 @@
+# Practify — Gemini Development Rules
+
+## Project Overview
+
+Practify (package name: `spotify-practice`) is a Svelte 5 web app for musicians
+to practice with Spotify. Users log in via Spotify OAuth 2.0 (PKCE), browse
+their playlists, play tracks through the Spotify Web Playback SDK, and create
+named loop bookmarks (start/end timestamps) that auto-seek back when the end is
+reached. Bookmarks are persisted in localStorage.
+
+- **Production URL**: https://oyvindma.github.io/practify/
+- **Deployment**: GitHub Actions → GitHub Pages on push to `prod` branch
+
+## Tech Stack
+
+| Layer           | Technology                        |
+| --------------- | --------------------------------- |
+| Framework       | Svelte 5 (runes: `$state`, `$derived`, `$effect`, `$props`) |
+| Build           | Vite 8 (`@sveltejs/vite-plugin-svelte` v7) |
+| Language        | TypeScript (strict, ES2022 target) |
+| Styling         | Tailwind CSS 4 (`@tailwindcss/vite` plugin) |
+| Testing         | Vitest 4 + jsdom (`vitest run` / `vitest`) |
+| Linting         | ESLint 10 + `@typescript-eslint` + `eslint-plugin-svelte` |
+| Formatting      | Prettier + `prettier-plugin-svelte` |
+| External APIs   | Spotify Web API, Spotify Web Playback SDK |
+| Path alias      | `$lib` → `./src/lib` |
+
+## Architecture — MVVM Pattern
+
+Follow the **Model-View-ViewModel** pattern. The guiding principle is that
+**Svelte components contain ZERO business logic** — they are pure View layer.
+All logic lives in plain TypeScript ViewModel files that are testable with
+Vitest without any DOM or Svelte dependency.
+
+### Layer Definitions
+
+#### Model (`src/lib/models/`)
+Pure data types, interfaces, and domain logic. No framework or browser
+dependencies. Fully unit-testable.
+
+```
+src/lib/models/
+  bookmark.ts
+  spotify.ts
+  player.ts
+```
+
+#### ViewModel (`src/lib/viewmodels/`)
+Each feature gets a ViewModel file (plain TypeScript class or factory function).
+ViewModels:
+- Encapsulate all **state management** and **business logic**
+- Expose **observable state** via Svelte stores (`writable`/`derived`) or runes
+- Expose **action methods** the View calls (e.g., `togglePlay()`, `addBookmark()`)
+- Depend on **Services** for side effects (API calls, localStorage, SDK)
+- Are **fully testable** with Vitest by injecting mock services
+
+```
+src/lib/viewmodels/
+  PlayerViewModel.ts
+  BookmarkViewModel.ts
+  PlaylistViewModel.ts
+  AuthViewModel.ts
+  CallbackViewModel.ts
+```
+
+**ViewModel naming**: `PascalCaseViewModel.ts`  
+**Test file**: `src/lib/viewmodels/__tests__/PlayerViewModel.test.ts`
+
+#### View (`src/components/`)
+Svelte components. They:
+- Import and instantiate a ViewModel (or receive one via `$props`)
+- Bind to ViewModel state using `$derived` / store subscriptions
+- Call ViewModel methods on user interaction (`onclick={vm.doThing}`)
+- Contain **NO business logic** — no `if/else` decisions about domain rules,
+  no direct API calls, no localStorage access
+- May contain **UI-only logic** (e.g., CSS class toggling, `bind:clientHeight`)
+
+```
+src/components/
+  Auth/
+    LoginButton.svelte
+  Bookmarks/
+    BookmarkEditor.svelte
+    BookmarkItem.svelte
+    BookmarkList.svelte
+  Player/
+    PlayerControls.svelte
+  Playlist/
+    PlaylistPicker.svelte
+    TrackList.svelte
+```
+
+#### Services (`src/lib/services/`)
+Thin wrappers around external dependencies (Spotify API, Spotify SDK,
+localStorage, `window.location`). Services:
+- Handle HTTP requests, SDK lifecycle, persistence
+- Are injected into ViewModels for testability
+- Have their own focused unit tests where appropriate
+
+```
+src/lib/services/
+  SpotifyAuthService.ts
+  SpotifyApiService.ts
+  SpotifyPlayerService.ts
+  BookmarkStorageService.ts
+```
+
+### Directory Structure
+
+```
+src/
+├── main.ts
+├── app.css
+├── App.svelte
+├── spotify.d.ts
+├── components/
+│   ├── Auth/
+│   ├── Bookmarks/
+│   ├── Player/
+│   └── Playlist/
+├── routes/
+│   └── callback/
+│       └── Callback.svelte
+└── lib/
+    ├── models/
+    ├── viewmodels/
+    │   └── __tests__/
+    ├── services/
+    │   └── __tests__/
+    └── stores/                # (legacy — migrate to viewmodels)
+```
+
+## Design Principles
+
+### Clean Code — Self-Explanatory Naming Over Comments
+Code should read like well-written prose. Names are the primary documentation.
+
+- **Names reveal intent.** A function, variable, or class name should tell
+  you *what* it does and *why* it exists without needing a comment.
+- **Comments are a last resort.** A comment means you failed to express
+  yourself in code. Refactor the name before reaching for `//`.
+- **Acceptable comments**: license headers, `TODO`s tied to an issue, and
+  genuinely non-obvious *why* explanations (never *what* the code does).
+- **No JSDoc that restates the signature.** If `deleteBookmark(trackId, bookmarkId)`
+  needs a doc comment to be understood, rename it.
+
+```typescript
+// ❌ Comment restates the obvious
+/** Delete a bookmark by id. */
+remove(trackId: string, bookmarkId: string): void
+
+// ✅ Name is self-explanatory — no comment needed
+deleteBookmark(trackId: string, bookmarkId: string): void
+```
+
+```typescript
+// ❌ Cryptic name requires a comment
+const ms = 5000  // milliseconds until timeout
+
+// ✅ Name carries the meaning
+const timeoutMs = 5000
+```
+
+### Single Responsibility (SRP)
+- Each file/class/function does **one thing**.
+- A ViewModel manages the state + logic for **one feature area**.
+- A Service wraps **one external dependency**.
+- A component renders **one UI concern**.
+
+### Dependency Injection for Testability
+ViewModels accept services via constructor/factory parameters with sensible
+defaults for production use:
+
+```typescript
+// ✅ Injectable, testable
+export function createPlayerViewModel(
+  playerService = new SpotifyPlayerService(),
+  authService = new SpotifyAuthService(),
+) { ... }
+
+// ❌ Hard-coded dependency, not testable
+import { playerStore } from '$lib/stores/playerStore'
+```
+
+### Test Conventions
+- **Test files**: colocated in `__tests__/` directories adjacent to the code.
+- **Naming**: `<FileName>.test.ts`
+- **Run**: `npm test` (single run) or `npm run test:watch` (watch mode)
+- **Environment**: jsdom (configured in `vite.config.ts`)
+- **Globals**: `describe`, `it`, `expect`, `vi` etc. are globally available.
+- **Focus**: Test ViewModels and Services thoroughly. Views are tested via
+  integration/E2E only if needed.
+- **Mocking**: Use `vi.fn()`, `vi.spyOn()`, and `vi.stubEnv()` — avoid
+  mocking implementation details.
+
+## Coding Conventions
+
+### TypeScript
+- Use strict TypeScript. Avoid `any` (linted as warning).
+- Prefer `interface` over `type` for object shapes.
+- Export types/interfaces from model files; import them where needed.
+
+### Svelte 5 Runes
+- Use `$state`, `$derived`, `$effect`, `$props` — NOT legacy `let`/`export let`.
+- Use `$props()` with an explicit `interface Props { ... }`.
+- Use `mount()` from `'svelte'` (not `new App()`).
+
+### Formatting
+- No semicolons
+- Single quotes
+- Trailing commas
+- 100 char print width
+- Svelte files use `prettier-plugin-svelte`
+
+### Naming
+| Thing            | Convention          | Example                        |
+| ---------------- | ------------------- | ------------------------------ |
+| Component        | PascalCase          | `BookmarkEditor.svelte`        |
+| Component dir    | PascalCase          | `components/Bookmarks/`        |
+| ViewModel        | PascalCase + VM     | `BookmarkViewModel.ts`         |
+| Service          | PascalCase + Service| `SpotifyApiService.ts`         |
+| Model/type file  | camelCase            | `bookmark.ts`                  |
+| Test file        | `*.test.ts`         | `BookmarkViewModel.test.ts`    |
+| Store (legacy)   | camelCase + Store   | `playerStore.ts`               |
+
+### Imports
+- Use `$lib/` alias for all `src/lib/` imports.
+- Prefer named exports; avoid default exports except for Svelte components.
+- Group imports: external → `$lib/` → relative.
+
+## UI / Styling
+- All styling uses Tailwind CSS 4 utility classes.
+- Dark theme: `bg-gray-950` base, `text-white` primary, `text-gray-400`
+  secondary, `green-500` accent (Spotify brand).
+- Responsive: mobile-first with `lg:` breakpoint for wide layout.
+- Language: Norwegian (Bokmål) for all user-facing text.
+
+## Scripts
+
+```bash
+npm run dev          # Vite dev server at http://127.0.0.1:5173
+npm test             # vitest run — single run
+npm run test:watch   # vitest — watch mode
+npm run check        # svelte-check + tsc
+npm run lint         # eslint src
+npm run format       # prettier --write src
+npm run build        # vite build (production)
+```
+
+## Environment Variables
+
+```
+VITE_SPOTIFY_CLIENT_ID   # Spotify app Client ID
+VITE_REDIRECT_URI        # OAuth callback URL (http://localhost:5173/callback locally)
+```
+
+Copy `.env.example` → `.env` for local development.
+
+## Important Notes
+
+- **Spotify Premium** is required (Web Playback SDK constraint).
+- The Spotify SDK script is loaded dynamically at runtime — not an npm package.
+- Client-side only app — no backend / SSR.
+- Deployment base path is `/practify/` on GitHub Pages.
+- `package-lock.json` is gitignored — use `npm install` (not `npm ci`).
