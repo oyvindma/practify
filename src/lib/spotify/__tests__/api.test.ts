@@ -6,7 +6,7 @@ vi.mock('$lib/stores/authStore', () => ({
 }))
 
 function mockFetch(data: unknown, ok = true) {
-  vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
     ok,
     json: async () => data,
     text: async () => JSON.stringify(data),
@@ -49,7 +49,7 @@ describe('getPlaylistTracks', () => {
   })
 
   it('throws on non-ok response', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       status: 403,
       text: async () => JSON.stringify({ error: { message: 'Forbidden' } }),
@@ -70,7 +70,7 @@ describe('getUserPlaylists', () => {
   })
 
   it('throws on non-ok response', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       status: 401,
       text: async () => JSON.stringify({ error: { message: 'Unauthorized' } }),

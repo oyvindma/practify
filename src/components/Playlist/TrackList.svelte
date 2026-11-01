@@ -14,7 +14,7 @@
   let loading = $state(true)
   let error = $state<string | null>(null)
 
-  $effect(async () => {
+  async function load() {
     try {
       tracks = await getPlaylistTracks(playlist.id)
     } catch (e) {
@@ -22,6 +22,10 @@
     } finally {
       loading = false
     }
+  }
+
+  $effect(() => {
+    load()
   })
 
   async function playTrack(track: SpotifyTrack) {

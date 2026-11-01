@@ -11,7 +11,7 @@
   let loading = $state(true)
   let error = $state<string | null>(null)
 
-  $effect(async () => {
+  async function load() {
     try {
       playlists = await getUserPlaylists()
     } catch (e) {
@@ -19,6 +19,10 @@
     } finally {
       loading = false
     }
+  }
+
+  $effect(() => {
+    load()
   })
 </script>
 

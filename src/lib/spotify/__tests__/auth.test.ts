@@ -57,7 +57,7 @@ describe('exchangeCodeForToken', () => {
       refresh_token: 'rt',
     }
 
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
       json: async () => mockResponse,
     } as Response)
@@ -69,7 +69,7 @@ describe('exchangeCodeForToken', () => {
 
   it('throws on non-ok response', async () => {
     sessionStorage.setItem('spotify_code_verifier', 'test-verifier')
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       text: async () => 'invalid_grant',
     } as Response)
@@ -89,7 +89,7 @@ describe('refreshAccessToken', () => {
       expires_in: 3600,
     }
 
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
       json: async () => mockResponse,
     } as Response)

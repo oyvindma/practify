@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, type MockInstance } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { get } from 'svelte/store'
 
 vi.mock('$lib/spotify/auth', () => ({
