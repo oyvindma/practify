@@ -1,35 +1,20 @@
 <script lang="ts">
-  import type { Bookmark } from '$lib/bookmarks/types'
-  import { bookmarkStore } from '$lib/stores/bookmarkStore'
-  import { playerStore } from '$lib/stores/playerStore'
-  import { formatMs } from '$lib/bookmarks/time'
+  import type { Bookmark } from '$lib/models/bookmark'
+  import { bookmarkViewModel, bookmarkEditorViewModel, playerViewModel } from '$lib/composition'
+  import { formatMs } from '$lib/models/time'
 
   interface Props {
     bookmark: Bookmark
-    onEdit?: (bookmark: Bookmark) => void
   }
 
-  let { bookmark, onEdit }: Props = $props()
+  let { bookmark }: Props = $props()
 
-  const isActive = $derived($playerStore.activeLoop?.id === bookmark.id)
+  const { playerState, toggleLoop, togglePlay, seek } = playerViewModel
+  const { deleteBookmark } = bookmarkViewModel
+  const { beginEditing } = bookmarkEditorViewModel
 
-  const isPlaying = $derived($playerStore.isPlaying)
-
-  function toggleLoop() {
-    if (isActive) {
-      playerStore.deactivateLoop()
-    } else {
-      playerStore.activateLoop(bookmark.startMs, bookmark.endMs, { id: bookmark.id })
-    }
-  }
-
-  function restart() {
-    playerStore.seek(bookmark.startMs)
-  }
-
-  function remove() {
-    bookmarkStore.remove(bookmark.id)
-  }
+  const isActive = $derived($playerState.activeLoop?.id === bookmark.id)
+  const isPlaying = $derived($playerState.isPlaying)
 </script>
 
 <div
@@ -47,7 +32,7 @@
   {#if isActive}
     <!-- Play/pause toggle -->
     <button
-      onclick={() => playerStore.togglePlay()}
+      onclick={togglePlay}
       class="p-1.5 rounded text-green-400 hover:text-green-300 hover:bg-gray-600 transition-colors shrink-0"
       title={isPlaying ? 'Pause' : 'Spill'}
     >
@@ -64,7 +49,7 @@
     </button>
     <!-- Restart -->
     <button
-      onclick={restart}
+      onclick={() => seek(bookmark.startMs)}
       class="p-1.5 rounded text-green-400 hover:text-green-300 hover:bg-gray-600 transition-colors shrink-0"
       title="Start loopen på nytt"
     >
@@ -76,7 +61,7 @@
   {/if}
 
   <button
-    onclick={toggleLoop}
+    onclick={() => toggleLoop(bookmark)}
     class="px-2.5 py-1 rounded text-xs font-medium transition-colors shrink-0 {isActive
       ? 'bg-green-500 text-black'
       : 'bg-gray-600 hover:bg-gray-500 text-white'}"
@@ -86,7 +71,7 @@
   </button>
 
   <button
-    onclick={remove}
+    onclick={() => deleteBookmark(bookmark.id)}
     class="p-1.5 rounded text-gray-500 hover:text-red-400 hover:bg-gray-600 transition-colors shrink-0"
     title="Slett loop"
   >
@@ -95,16 +80,14 @@
     </svg>
   </button>
 
-  {#if onEdit}
-    <button
-      onclick={() => onEdit(bookmark)}
-      class="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-gray-600 transition-colors shrink-0"
-      title="Rediger loop"
-    >
-      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-      </svg>
-    </button>
-  {/if}
+  <button
+    onclick={() => beginEditing(bookmark)}
+    class="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-gray-600 transition-colors shrink-0"
+    title="Rediger loop"
+  >
+    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  </button>
 </div>

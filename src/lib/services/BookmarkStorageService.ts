@@ -1,9 +1,10 @@
 import { v4 as generateUuid } from 'uuid'
-import type { Bookmark } from '$lib/bookmarks/types'
+import type { Bookmark, BookmarkDraft } from '$lib/models/bookmark'
 
 export interface IBookmarkStorageService {
   getBookmarks(trackId: string): Bookmark[]
-  saveBookmark(trackId: string, data: Omit<Bookmark, 'id' | 'trackId'>): Bookmark
+  saveBookmark(trackId: string, draft: BookmarkDraft): Bookmark
+  updateBookmark(trackId: string, bookmarkId: string, draft: BookmarkDraft): Bookmark
   deleteBookmark(trackId: string, bookmarkId: string): void
 }
 
@@ -22,18 +23,33 @@ export class BookmarkStorageService implements IBookmarkStorageService {
     }
   }
 
-  saveBookmark(trackId: string, data: Omit<Bookmark, 'id' | 'trackId'>): Bookmark {
-    const bookmark: Bookmark = { id: generateUuid(), trackId, ...data }
-    const existingBookmarks = this.getBookmarks(trackId)
-    localStorage.setItem(
-      buildStorageKey(trackId),
-      JSON.stringify([...existingBookmarks, bookmark]),
-    )
+  saveBookmark(trackId: string, draft: BookmarkDraft): Bookmark {
+    const bookmark: Bookmark = { id: generateUuid(), trackId, ...draft }
+    this.writeBookmarks(trackId, [...this.getBookmarks(trackId), bookmark])
     return bookmark
   }
 
+  updateBookmark(trackId: string, bookmarkId: string, draft: BookmarkDraft): Bookmark {
+    const bookmarks = this.getBookmarks(trackId)
+    const existing = bookmarks.find((b) => b.id === bookmarkId)
+    if (!existing) throw new Error(`Bookmark not found: ${bookmarkId}`)
+
+    const updated: Bookmark = { ...existing, ...draft }
+    this.writeBookmarks(
+      trackId,
+      bookmarks.map((b) => (b.id === bookmarkId ? updated : b)),
+    )
+    return updated
+  }
+
   deleteBookmark(trackId: string, bookmarkId: string): void {
-    const remainingBookmarks = this.getBookmarks(trackId).filter((b) => b.id !== bookmarkId)
-    localStorage.setItem(buildStorageKey(trackId), JSON.stringify(remainingBookmarks))
+    this.writeBookmarks(
+      trackId,
+      this.getBookmarks(trackId).filter((b) => b.id !== bookmarkId),
+    )
+  }
+
+  private writeBookmarks(trackId: string, bookmarks: Bookmark[]): void {
+    localStorage.setItem(buildStorageKey(trackId), JSON.stringify(bookmarks))
   }
 }

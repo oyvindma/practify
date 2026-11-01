@@ -10,11 +10,12 @@ let sdkReadyPromise: Promise<void> | null = null
 /**
  * Injects the Spotify Web Playback SDK script and resolves once the SDK is
  * ready. Safe to call multiple times — subsequent calls return the same promise.
+ * A failed script load rejects and is retried by the next call.
  */
 export function loadSpotifySDK(): Promise<void> {
   if (sdkReadyPromise) return sdkReadyPromise
 
-  sdkReadyPromise = new Promise((resolve) => {
+  sdkReadyPromise = new Promise((resolve, reject) => {
     if (typeof window.Spotify !== 'undefined') {
       resolve()
       return
@@ -29,6 +30,11 @@ export function loadSpotifySDK(): Promise<void> {
     const script = document.createElement('script')
     script.src = 'https://sdk.scdn.co/spotify-player.js'
     script.async = true
+    script.onerror = () => {
+      sdkReadyPromise = null
+      script.remove()
+      reject(new Error('Could not load the Spotify Web Playback SDK script'))
+    }
     document.body.appendChild(script)
   })
 

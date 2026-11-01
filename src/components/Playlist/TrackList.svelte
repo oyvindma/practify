@@ -1,56 +1,33 @@
 <script lang="ts">
-  import { getPlaylistTracks, type SpotifyPlaylist, type SpotifyTrack } from '$lib/spotify/api'
-  import { playerStore } from '$lib/stores/playerStore'
-  import { formatMs } from '$lib/bookmarks/time'
+  import { playlistViewModel, playerViewModel } from '$lib/composition'
+  import { formatMs } from '$lib/models/time'
 
-  interface Props {
-    playlist: SpotifyPlaylist
-    onBack: () => void
-  }
-
-  let { playlist, onBack }: Props = $props()
-
-  let tracks: SpotifyTrack[] = $state([])
-  let loading = $state(true)
-  let error = $state<string | null>(null)
-
-  async function load() {
-    try {
-      tracks = await getPlaylistTracks(playlist.id)
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Kunne ikke hente låter'
-    } finally {
-      loading = false
-    }
-  }
-
-  $effect(() => {
-    load()
-  })
-
-  async function playTrack(track: SpotifyTrack) {
-    playerStore.setTrack(track)
-    await playerStore.play(track.uri)
-  }
+  const { playlistState, clearSelection } = playlistViewModel
+  const { playTrack } = playerViewModel
 </script>
 
 <div class="p-4 bg-gray-900 rounded-xl">
   <div class="flex items-center gap-2 mb-3">
-    <button onclick={onBack} class="text-gray-400 hover:text-white transition-colors p-1 rounded">
+    <button
+      onclick={clearSelection}
+      class="text-gray-400 hover:text-white transition-colors p-1 rounded"
+    >
       ← Tilbake
     </button>
-    <h2 class="text-lg font-semibold text-white truncate">{playlist.name}</h2>
+    <h2 class="text-lg font-semibold text-white truncate">
+      {$playlistState.selectedPlaylist?.name}
+    </h2>
   </div>
 
-  {#if loading}
+  {#if $playlistState.isLoadingTracks}
     <p class="text-gray-400 text-sm">Laster låter…</p>
-  {:else if error}
-    <p class="text-red-400 text-sm">⚠️ {error}</p>
-  {:else if tracks.length === 0}
+  {:else if $playlistState.tracksError}
+    <p class="text-red-400 text-sm">⚠️ {$playlistState.tracksError}</p>
+  {:else if $playlistState.tracks.length === 0}
     <p class="text-gray-400 text-sm">Ingen låter i denne spillelisten.</p>
   {:else}
     <ul class="space-y-1 max-h-96 overflow-y-auto">
-      {#each tracks as track (track.id)}
+      {#each $playlistState.tracks as track (track.id)}
         <li>
           <button
             onclick={() => playTrack(track)}
@@ -69,7 +46,9 @@
                 {track.artists.map((a) => a.name).join(', ')}
               </p>
             </div>
-            <span class="text-xs text-gray-500 shrink-0">{formatMs(track.duration_ms, 'seconds')}</span>
+            <span class="text-xs text-gray-500 shrink-0"
+              >{formatMs(track.duration_ms, 'seconds')}</span
+            >
           </button>
         </li>
       {/each}

@@ -1,29 +1,19 @@
 <script lang="ts">
-  import { sortedBookmarks } from '$lib/stores/bookmarkStore'
-  import { playerStore } from '$lib/stores/playerStore'
+  import { bookmarkViewModel, playerViewModel } from '$lib/composition'
   import BookmarkItem from './BookmarkItem.svelte'
   import BookmarkEditor from './BookmarkEditor.svelte'
-  import type { Bookmark } from '$lib/bookmarks/types'
 
   interface Props {
     showEditor?: boolean
-    onEditRequest?: (bookmark: Bookmark) => void
   }
 
-  let { showEditor = true, onEditRequest }: Props = $props()
+  let { showEditor = true }: Props = $props()
 
-  let editingBookmark = $state<Bookmark | null>(null)
-
-  function handleEdit(bookmark: Bookmark) {
-    if (onEditRequest) {
-      onEditRequest(bookmark)
-    } else {
-      editingBookmark = bookmark
-    }
-  }
+  const { sortedBookmarks } = bookmarkViewModel
+  const { playerState } = playerViewModel
 </script>
 
-{#if $playerStore.track}
+{#if $playerState.track}
   <div class="space-y-3">
     <h2 class="text-lg font-semibold text-white">Loops</h2>
 
@@ -34,13 +24,13 @@
     {:else}
       <div class="space-y-1.5">
         {#each $sortedBookmarks as bookmark (bookmark.id)}
-          <BookmarkItem {bookmark} onEdit={handleEdit} />
+          <BookmarkItem {bookmark} />
         {/each}
       </div>
     {/if}
 
     {#if showEditor}
-      <BookmarkEditor {editingBookmark} onDoneEditing={() => (editingBookmark = null)} />
+      <BookmarkEditor />
     {/if}
   </div>
 {/if}

@@ -1,21 +1,13 @@
 <script lang="ts">
-  import { authStore, isAuthenticated } from '$lib/stores/authStore'
-  import { buildAuthUrl } from '$lib/spotify/auth'
+  import { authViewModel } from '$lib/composition'
 
-  async function login() {
-    const url = await buildAuthUrl()
-    window.location.href = url
-  }
-
-  function logout() {
-    authStore.logout()
-  }
+  const { authState, isAuthenticated, login, logout } = authViewModel
 </script>
 
 {#if $isAuthenticated}
   <div class="flex items-center gap-3">
-    {#if $authStore.displayName}
-      <span class="text-sm text-gray-300">👤 {$authStore.displayName}</span>
+    {#if $authState.displayName}
+      <span class="text-sm text-gray-300">👤 {$authState.displayName}</span>
     {/if}
     <button
       onclick={logout}
