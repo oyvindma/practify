@@ -1,7 +1,18 @@
 <script lang="ts">
-  import { lyricsViewModel } from '$lib/composition'
+  import { lyricsViewModel, metronomeViewModel, playerViewModel } from '$lib/composition'
+
+  interface Props {
+    // Fill the height given by the parent instead of using a fixed maximum
+    fill?: boolean
+  }
+
+  let { fill = false }: Props = $props()
 
   const { lyricsState, activeLineIndex } = lyricsViewModel
+  const { playFromLyricLine } = metronomeViewModel
+  const { playerState } = playerViewModel
+
+  const canPickStartLine = $derived(!$playerState.activeLoop && $lyricsState.lyrics?.synced)
 
   const MANUAL_SCROLL_PAUSE_MS = 4000
 
@@ -34,7 +45,7 @@
   }
 </script>
 
-<div class="bg-gray-800 rounded-lg p-4">
+<div class="bg-gray-800 rounded-lg p-4 {fill ? 'flex flex-col flex-1 min-h-0' : ''}">
   <h3 class="text-sm font-semibold text-gray-200 mb-3">Tekst</h3>
 
   {#if $lyricsState.status === 'loading'}
@@ -47,21 +58,31 @@
     <div
       bind:this={container}
       onscroll={onScroll}
-      class="relative overflow-y-scroll max-h-[50vh] pr-2 space-y-2"
+      class="relative overflow-y-scroll pr-2 space-y-2 {fill ? 'flex-1 min-h-0' : 'max-h-[35vh]'}"
     >
       {#each $lyricsState.lyrics.lines as line, index (index)}
-        <p
-          data-line={index}
-          class="text-base leading-snug transition-colors {$lyricsState.lyrics.synced
-            ? index === $activeLineIndex
+        {@const lineClass = `text-base leading-snug transition-colors ${
+          !$lyricsState.lyrics.synced
+            ? 'text-gray-300'
+            : index === $activeLineIndex
               ? 'text-green-400 font-semibold'
               : index < $activeLineIndex
                 ? 'text-gray-500'
                 : 'text-gray-300'
-            : 'text-gray-300'}"
-        >
-          {line.text || ' '}
-        </p>
+        }`}
+        {#if canPickStartLine && line.startMs !== null}
+          {@const startMs = line.startMs}
+          <button
+            type="button"
+            data-line={index}
+            onclick={() => playFromLyricLine(startMs)}
+            class="block w-full text-left cursor-pointer hover:text-white {lineClass}"
+          >
+            {line.text || '\u00a0'}
+          </button>
+        {:else}
+          <p data-line={index} class={lineClass}>{line.text || '\u00a0'}</p>
+        {/if}
       {/each}
     </div>
   {/if}

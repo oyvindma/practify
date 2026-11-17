@@ -2,11 +2,18 @@
   import { playlistViewModel, playerViewModel } from '$lib/composition'
   import { formatMs } from '$lib/models/time'
 
+  interface Props {
+    // Fill the height given by the parent (the list scrolls) instead of using a fixed maximum
+    fill?: boolean
+  }
+
+  let { fill = false }: Props = $props()
+
   const { playlistState, clearSelection } = playlistViewModel
   const { playTrack } = playerViewModel
 </script>
 
-<div class="p-4 bg-gray-900 rounded-xl">
+<div class="p-4 bg-gray-900 rounded-xl {fill ? 'flex flex-col flex-1 min-h-0' : ''}">
   <div class="flex items-center gap-2 mb-3">
     <button
       onclick={clearSelection}
@@ -26,7 +33,7 @@
   {:else if $playlistState.tracks.length === 0}
     <p class="text-gray-400 text-sm">Ingen låter i denne spillelisten.</p>
   {:else}
-    <ul class="space-y-1 max-h-96 overflow-y-auto">
+    <ul class="space-y-1 overflow-y-auto {fill ? 'flex-1 min-h-0' : 'max-h-96'}">
       {#each $playlistState.tracks as track (track.id)}
         <li>
           <button
