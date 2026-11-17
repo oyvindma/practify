@@ -481,7 +481,7 @@ describe('MetronomeViewModel', () => {
       viewModel.setBpm(90)
       metronome.start.mockClear()
       clockOptions().onWrap()
-      expect(metronome.start).toHaveBeenCalledWith(90, 0)
+      expect(metronome.start).toHaveBeenCalledWith(90)
     })
   })
 
@@ -509,7 +509,7 @@ describe('MetronomeViewModel', () => {
       viewModel.toggle()
       expect(state().isRunning).toBe(true)
       expect(clockOptions()).toMatchObject({ startMs: 0, loop: null, trackEndMs: 200_000 })
-      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+      expect(metronome.start).toHaveBeenCalledWith(120)
     })
 
     it('starts from the active loop and repeats it', () => {
@@ -536,7 +536,7 @@ describe('MetronomeViewModel', () => {
       viewModel.toggle()
       metronome.start.mockClear()
       clockOptions().onWrap()
-      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+      expect(metronome.start).toHaveBeenCalledWith(120)
     })
 
     it('stops at the end of the track and returns to the start position', () => {
@@ -554,7 +554,7 @@ describe('MetronomeViewModel', () => {
       viewModel.playFromLyricLine(31_000)
       expect(state().isRunning).toBe(true)
       expect(clockOptions()).toMatchObject({ startMs: 31_000, loop: null })
-      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+      expect(metronome.start).toHaveBeenCalledWith(120)
     })
 
     it('jumps to another clicked line while running', () => {
@@ -711,7 +711,7 @@ describe('MetronomeViewModel', () => {
       metronome.start.mockClear()
       viewModel.seekTo(45_000)
       expect(clock.seekTo).toHaveBeenCalledWith(45_000)
-      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+      expect(metronome.start).toHaveBeenCalledWith(120)
     })
 
     it('moves the start position when silent and stopped, unless a loop decides', () => {
@@ -747,7 +747,7 @@ describe('MetronomeViewModel', () => {
       playTrack('2')
       expect(state()).toMatchObject({ mode: 'silent', isRunning: true, bpm: 90 })
       expect(clockOptions()).toMatchObject({ startMs: 0, loop: null })
-      expect(metronome.start).toHaveBeenCalledWith(90, 0)
+      expect(metronome.start).toHaveBeenCalledWith(90)
     })
 
     it('waits for the fetched bpm and then carries on', async () => {
@@ -801,6 +801,129 @@ describe('MetronomeViewModel', () => {
       playTrack('2', { isPlaying: true })
       expect(state().mode).toBe('withSong')
       expect(clock.start).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('clicking a lyric line while clicking along', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(1_000_000)
+      storage.getBpm.mockReturnValue(120) // 500 ms per beat
+      playTrack('1', { isPlaying: true })
+      viewModel.toggle()
+    })
+
+    afterEach(() => vi.useRealTimers())
+
+    it('puts a click on the line when there is no tapped sync', async () => {
+      await flush()
+      metronome.start.mockClear()
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(metronome.start).toHaveBeenCalledTimes(1)
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('uses the line it sought to instead of asking Spotify for a possibly stale position', async () => {
+      await flush()
+      metronome.start.mockClear()
+      player.getCurrentPositionMs.mockClear()
+      player.getCurrentPositionMs.mockResolvedValue(5)
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(player.getCurrentPositionMs).not.toHaveBeenCalled()
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('accounts for the time that passed since the seek finished', async () => {
+      await flush()
+      metronome.start.mockClear()
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      metronome.start.mockClear()
+      // a later realignment with the same anchor sits on the same grid
+      player.getCurrentPositionMs.mockResolvedValue(31_120)
+      update({ activeLoop: loop(31_000, 40_000) })
+      await flush()
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 380)
+    })
+
+    it('stays on the synced grid when one exists', async () => {
+      storage.getBeatOffsetMs.mockReturnValue(130)
+      playTrack('2', { isPlaying: true })
+      viewModel.toggle()
+      await flush()
+      metronome.start.mockClear()
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      // beats at 130 + n * 500: the next one after 31000 is 130 ms away
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 130)
+    })
+
+    it('an active loop still decides where the grid starts', async () => {
+      update({ activeLoop: loop(10_250, 20_000) })
+      await flush()
+      metronome.start.mockClear()
+      player.getCurrentPositionMs.mockResolvedValue(10_600)
+      viewModel.restart()
+      await flush()
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 0)
+    })
+
+    it('keeps clicking when the seek resumes a paused song before Spotify reports it', async () => {
+      update({ isPlaying: false })
+      await flush()
+      metronome.start.mockClear()
+      metronome.stop.mockClear()
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(player.togglePlay).toHaveBeenCalledTimes(1)
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('ignores Spotify reports of the jump while the seek is still in flight', async () => {
+      await flush()
+      metronome.start.mockClear()
+      player.getCurrentPositionMs.mockClear()
+      let finishSeek: () => void = () => {}
+      player.seek.mockReturnValueOnce(new Promise<void>((resolve) => (finishSeek = resolve)))
+      viewModel.playFromLyricLine(31_000)
+      update({ positionMs: 31_000 })
+      vi.advanceTimersByTime(600)
+      update({ positionMs: 31_600 })
+      await flush()
+      expect(metronome.start).not.toHaveBeenCalled()
+      expect(player.getCurrentPositionMs).not.toHaveBeenCalled()
+
+      finishSeek()
+      await flush()
+      expect(metronome.start).toHaveBeenCalledTimes(1)
+    })
+
+    it('only the latest of two quick line clicks realigns', async () => {
+      await flush()
+      metronome.start.mockClear()
+      let finishFirst: () => void = () => {}
+      player.seek
+        .mockReturnValueOnce(new Promise<void>((resolve) => (finishFirst = resolve)))
+        .mockResolvedValueOnce(undefined)
+      viewModel.playFromLyricLine(10_000)
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      finishFirst()
+      await flush()
+      expect(metronome.start).toHaveBeenCalledTimes(1)
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('does nothing for the clicks when the metronome is not running', async () => {
+      viewModel.toggle()
+      await flush()
+      metronome.start.mockClear()
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(31_000)
+      expect(metronome.start).not.toHaveBeenCalled()
     })
   })
 })

@@ -100,6 +100,8 @@ export function createMetronomeViewModel(
   let practicePositionMs: number | null = null
   // A silent session that was running when the track changed carries on once the new bpm is known
   let resumeSilentOnBpm = false
+  let lineSeekId = 0
+  let isLineSeekInFlight = false
   let lastPositionSample: PositionSample | null = null
   let syncTapPositionsMs: number[] = []
 
@@ -131,11 +133,11 @@ export function createMetronomeViewModel(
   // Without a synced beat grid the clicks simply start together with the position
   function startClicksAt(positionMs: number) {
     if (current.bpm === null) return
-    const delayMs =
-      current.beatOffsetMs === null
-        ? 0
-        : msUntilNextBeat(positionMs, current.beatOffsetMs, current.bpm)
-    metronome.start(current.bpm, delayMs)
+    if (current.beatOffsetMs === null) {
+      metronome.start(current.bpm)
+      return
+    }
+    metronome.start(current.bpm, msUntilNextBeat(positionMs, current.beatOffsetMs, current.bpm))
   }
 
   function startSilentSession(startMs: number = restartPointMs()) {
@@ -152,25 +154,43 @@ export function createMetronomeViewModel(
     startClicksAt(startMs)
   }
 
-  async function alignClicksToSong() {
+  // Where the song's beats fall: the tapped sync, else the loop or line practice started from
+  function gridAnchorMs(): number {
+    return current.beatOffsetMs ?? playerSnapshot.activeLoop?.startMs ?? pickedLineStartMs ?? 0
+  }
+
+  // `knownPosition` is a position we caused ourselves (a seek), which is more reliable than
+  // asking Spotify while its state may still describe the position before the seek
+  async function alignClicksToSong(knownPosition?: PositionSample) {
     const isWaitingForSong = current.mode !== 'withSong' || !current.isRunning
     if (isWaitingForSong || current.bpm === null) return
-    if (!playerSnapshot.isPlaying) {
+    if (!knownPosition && !playerSnapshot.isPlaying) {
       metronome.stop()
       return
     }
     const bpm = current.bpm
-    const positionMs = await player.getCurrentPositionMs()
-    const stillApplies =
-      current.mode === 'withSong' && current.isRunning && playerSnapshot.isPlaying
+    const positionMs = knownPosition
+      ? knownPosition.positionMs + (Date.now() - knownPosition.atMs)
+      : await player.getCurrentPositionMs()
+    const isSongPlaying = knownPosition !== undefined || playerSnapshot.isPlaying
+    const stillApplies = current.mode === 'withSong' && current.isRunning && isSongPlaying
     if (!stillApplies) return
-    const gridAnchorMs = current.beatOffsetMs ?? playerSnapshot.activeLoop?.startMs ?? 0
-    metronome.start(bpm, msUntilNextBeat(positionMs, gridAnchorMs, bpm))
+    metronome.start(bpm, msUntilNextBeat(positionMs, gridAnchorMs(), bpm))
   }
 
   async function seekAndPlay(positionMs: number) {
-    await player.seek(positionMs)
-    if (!playerSnapshot.isPlaying) await player.togglePlay()
+    const seekId = ++lineSeekId
+    isLineSeekInFlight = true
+    try {
+      await player.seek(positionMs)
+      if (!playerSnapshot.isPlaying) await player.togglePlay()
+    } finally {
+      if (seekId === lineSeekId) isLineSeekInFlight = false
+    }
+    if (seekId !== lineSeekId) return
+    // Spotify's reports from around the seek would read as a jump from the old position
+    lastPositionSample = null
+    void alignClicksToSong({ positionMs, atMs: Date.now() })
   }
 
   function resumeSilentIfReady() {
@@ -314,7 +334,7 @@ export function createMetronomeViewModel(
       if (isPlaying) setMode('withSong')
       return
     }
-    if (current.isRunning) void alignClicksToSong()
+    if (current.isRunning && !isLineSeekInFlight) void alignClicksToSong()
   }
 
   // Seeks and loop laps move the song position; the beat grid has to follow
@@ -324,6 +344,7 @@ export function createMetronomeViewModel(
     const sample = { positionMs, atMs: Date.now() }
     lastPositionSample = sample
     if (!previous || !isPlaying || current.mode !== 'withSong' || !current.isRunning) return
+    if (isLineSeekInFlight) return
     const expectedMs = previous.positionMs + (sample.atMs - previous.atMs)
     if (Math.abs(positionMs - expectedMs) > POSITION_JUMP_TOLERANCE_MS) void alignClicksToSong()
   }

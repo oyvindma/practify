@@ -1,4 +1,6 @@
 export interface IMetronomeService {
+  // Without a delay the first click comes right away; with one, clicks sit on a beat grid that
+  // has a beat `firstClickDelayMs` from now
   start(bpm: number, firstClickDelayMs?: number): void
   setBpm(bpm: number): void
   stop(): void
@@ -18,13 +20,16 @@ export class WebAudioMetronomeService implements IMetronomeService {
   private bpm = 120
   private pendingClicks = new Set<OscillatorNode>()
 
-  start(bpm: number, firstClickDelayMs = 0): void {
+  start(bpm: number, firstClickDelayMs?: number): void {
     this.stop()
     this.bpm = bpm
     this.context ??= new AudioContext()
     void this.context.resume()
-    const firstClickDelaySeconds = Math.max(START_DELAY_SECONDS, firstClickDelayMs / 1000)
-    this.nextClickTime = this.context.currentTime + firstClickDelaySeconds
+    const leadSeconds =
+      firstClickDelayMs === undefined
+        ? START_DELAY_SECONDS
+        : this.leadOnBeatGrid(firstClickDelayMs, bpm)
+    this.nextClickTime = this.context.currentTime + leadSeconds
     this.schedulerTimer = setInterval(() => this.scheduleClicks(), SCHEDULER_INTERVAL_MS)
     this.scheduleClicks()
   }
@@ -45,6 +50,15 @@ export class WebAudioMetronomeService implements IMetronomeService {
       }
     }
     this.pendingClicks.clear()
+  }
+
+  // A beat that is too close to be scheduled is skipped, never moved: moving it would shift
+  // the whole grid by up to START_DELAY_SECONDS
+  private leadOnBeatGrid(delayMs: number, bpm: number): number {
+    const beatMs = 60_000 / bpm
+    let leadMs = delayMs
+    while (leadMs < START_DELAY_SECONDS * 1000) leadMs += beatMs
+    return leadMs / 1000
   }
 
   private scheduleClicks(): void {

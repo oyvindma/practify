@@ -98,4 +98,28 @@ describe('WebAudioMetronomeService', () => {
     metronome.stop()
     expect(stopCalls.length).toBeGreaterThan(0)
   })
+
+  it('starts right away without a grid delay', () => {
+    const metronome = new WebAudioMetronomeService()
+    metronome.start(120)
+    expect(clickStartTimes[0]).toBeCloseTo(0.05, 5)
+    metronome.stop()
+  })
+
+  it('skips a beat that is too close instead of moving it, keeping the grid in phase', () => {
+    const metronome = new WebAudioMetronomeService()
+    metronome.start(120, 20)
+    advanceSeconds(1.1)
+    expect(clickStartTimes[0]).toBeCloseTo(0.52, 5)
+    expect(clickStartTimes[1]).toBeCloseTo(1.02, 5)
+    metronome.stop()
+  })
+
+  it('waits a whole beat when the grid beat is exactly now', () => {
+    const metronome = new WebAudioMetronomeService()
+    metronome.start(120, 0)
+    advanceSeconds(0.6)
+    expect(clickStartTimes[0]).toBeCloseTo(0.5, 5)
+    metronome.stop()
+  })
 })
