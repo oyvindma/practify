@@ -10,7 +10,17 @@
   let { fill = false }: Props = $props()
 
   const { playlistState, clearSelection } = playlistViewModel
-  const { playTrack } = playerViewModel
+  const { playTrack, playerState } = playerViewModel
+
+  const currentTrackId = $derived($playerState.track?.id ?? null)
+
+  let list: HTMLUListElement | undefined = $state()
+
+  // N/P can change the track while it is scrolled out of sight
+  $effect(() => {
+    if (currentTrackId === null) return
+    list?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' })
+  })
 </script>
 
 <div class="p-4 bg-gray-900 rounded-xl {fill ? 'flex flex-col flex-1 min-h-0' : ''}">
@@ -33,12 +43,16 @@
   {:else if $playlistState.tracks.length === 0}
     <p class="text-gray-400 text-sm">Ingen låter i denne spillelisten.</p>
   {:else}
-    <ul class="space-y-1 overflow-y-auto {fill ? 'flex-1 min-h-0' : 'max-h-96'}">
+    <ul bind:this={list} class="space-y-1 overflow-y-auto {fill ? 'flex-1 min-h-0' : 'max-h-96'}">
       {#each $playlistState.tracks as track (track.id)}
+        {@const isCurrent = track.id === currentTrackId}
         <li>
           <button
             onclick={() => playTrack(track)}
-            class="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-3"
+            aria-current={isCurrent ? 'true' : undefined}
+            class="w-full text-left px-3 py-2 rounded-lg transition-colors flex items-center gap-3 {isCurrent
+              ? 'bg-green-900/40 ring-1 ring-green-500'
+              : 'hover:bg-gray-700'}"
           >
             {#if track.album.images[0]}
               <img
@@ -48,11 +62,21 @@
               />
             {/if}
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-white truncate">{track.name}</p>
+              <p class="text-sm font-medium truncate {isCurrent ? 'text-green-400' : 'text-white'}">
+                {track.name}
+              </p>
               <p class="text-xs text-gray-400 truncate">
                 {track.artists.map((a) => a.name).join(', ')}
               </p>
             </div>
+            {#if isCurrent}
+              <span
+                class="text-green-400 shrink-0"
+                title={$playerState.isPlaying ? 'Spilles nå' : 'Valgt'}
+              >
+                {$playerState.isPlaying ? '▶' : '❚❚'}
+              </span>
+            {/if}
             <span class="text-xs text-gray-500 shrink-0"
               >{formatMs(track.duration_ms, 'seconds')}</span
             >
