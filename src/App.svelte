@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { appViewModel, playerViewModel, playlistViewModel } from '$lib/composition'
+  import {
+    appViewModel,
+    playerViewModel,
+    playlistViewModel,
+    shortcutsViewModel,
+  } from '$lib/composition'
+  import { toKeyPress } from '$lib/dom/keyPress'
+  import { resolveShortcut } from '$lib/models/shortcuts'
   import LoginButton from './components/Auth/LoginButton.svelte'
   import PlaylistPicker from './components/Playlist/PlaylistPicker.svelte'
   import TrackList from './components/Playlist/TrackList.svelte'
@@ -9,21 +16,36 @@
   import BookmarkEditor from './components/Bookmarks/BookmarkEditor.svelte'
   import MetronomePanel from './components/Metronome/MetronomePanel.svelte'
   import LyricsPanel from './components/Lyrics/LyricsPanel.svelte'
+  import ShortcutsHelp from './components/Shortcuts/ShortcutsHelp.svelte'
   import Callback from './routes/callback/Callback.svelte'
 
   const { isCallbackRoute, isAuthenticated, start } = appViewModel
   const { playerState } = playerViewModel
   const { playlistState } = playlistViewModel
+  const { handleKey, toggleHelp } = shortcutsViewModel
 
   let headerHeight = $state(0)
   let playerHeight = $state(0)
 
   onMount(start)
+
+  function onKeyDown(event: KeyboardEvent) {
+    if (event.defaultPrevented) return
+    if (handleKey(toKeyPress(event))) event.preventDefault()
+  }
+
+  // Buttons activate on Space release in some browsers, so the release is cancelled too
+  function onKeyUp(event: KeyboardEvent) {
+    if (resolveShortcut(toKeyPress(event)) === 'togglePlay') event.preventDefault()
+  }
 </script>
+
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 {#if isCallbackRoute}
   <Callback />
 {:else}
+  <ShortcutsHelp />
   <div class="min-h-screen bg-gray-950 text-white flex flex-col">
     <!-- Header -->
     <header
@@ -34,7 +56,20 @@
         <span class="text-green-500 text-xl">🎸</span>
         <h1 class="font-bold text-lg">Spotify Practice</h1>
       </div>
-      <LoginButton />
+      <div class="flex items-center gap-3">
+        {#if $isAuthenticated}
+          <button
+            type="button"
+            onclick={toggleHelp}
+            class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded-full transition-colors"
+            title="Hurtigtaster (?)"
+            aria-label="Vis hurtigtaster"
+          >
+            ?
+          </button>
+        {/if}
+        <LoginButton />
+      </div>
     </header>
 
     {#if $isAuthenticated}
