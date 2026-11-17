@@ -3,6 +3,7 @@ import { WebAudioMetronomeService } from '../MetronomeService'
 
 let currentTime: number
 let clickStartTimes: number[]
+let stopCalls: (number | undefined)[]
 
 class FakeAudioContext {
   destination = {}
@@ -20,8 +21,9 @@ class FakeAudioContext {
     return {
       frequency: { value: 0 },
       connect: vi.fn(),
+      onended: null as (() => void) | null,
       start: (time: number) => clickStartTimes.push(time),
-      stop: vi.fn(),
+      stop: (when?: number) => stopCalls.push(when),
     }
   }
 }
@@ -30,6 +32,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   currentTime = 0
   clickStartTimes = []
+  stopCalls = []
   vi.stubGlobal('AudioContext', FakeAudioContext)
 })
 
@@ -76,5 +79,23 @@ describe('WebAudioMetronomeService', () => {
     const count = clickStartTimes.length
     advanceSeconds(2)
     expect(clickStartTimes).toHaveLength(count)
+  })
+
+  it('delays the first click to align with the beat grid', () => {
+    const metronome = new WebAudioMetronomeService()
+    metronome.start(120, 300)
+    expect(clickStartTimes).toEqual([])
+    advanceSeconds(0.25)
+    expect(clickStartTimes[0]).toBeCloseTo(0.3, 5)
+    metronome.stop()
+  })
+
+  it('cancels clicks that were scheduled ahead when stopped', () => {
+    const metronome = new WebAudioMetronomeService()
+    metronome.start(120)
+    advanceSeconds(0.1)
+    stopCalls.length = 0
+    metronome.stop()
+    expect(stopCalls.length).toBeGreaterThan(0)
   })
 })

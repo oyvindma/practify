@@ -1,4 +1,6 @@
 import { BookmarkStorageService } from '$lib/services/BookmarkStorageService'
+import { derived } from 'svelte/store'
+import { PracticeClock } from '$lib/playback/PracticeClock'
 import { ReccoBeatsBpmService } from '$lib/services/BpmService'
 import { BpmStorageService } from '$lib/services/BpmStorageService'
 import { LrclibLyricsService } from '$lib/services/LyricsService'
@@ -35,16 +37,22 @@ export const bookmarkEditorViewModel = createBookmarkEditorViewModel(
   bookmarkViewModel,
   playerViewModel,
 )
-export const lyricsViewModel = createLyricsViewModel(
-  playerViewModel,
-  new LrclibLyricsService(),
-  new LyricsStorageService(),
-)
 export const metronomeViewModel = createMetronomeViewModel(
   playerViewModel,
   new ReccoBeatsBpmService(),
   new BpmStorageService(),
   new WebAudioMetronomeService(),
+  new PracticeClock(),
+)
+
+const lyricsPositionMs = derived(
+  [metronomeViewModel.practicePositionMs, playerViewModel.displayPositionMs],
+  ([practicePositionMs, songPositionMs]) => practicePositionMs ?? songPositionMs,
+)
+export const lyricsViewModel = createLyricsViewModel(
+  { playerState: playerViewModel.playerState, displayPositionMs: lyricsPositionMs },
+  new LrclibLyricsService(),
+  new LyricsStorageService(),
 )
 export const playlistViewModel = createPlaylistViewModel(apiService)
 export const callbackViewModel = createCallbackViewModel(

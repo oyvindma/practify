@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { get, writable } from 'svelte/store'
-import { INITIAL_PLAYER_STATE, type PlayerState } from '$lib/models/player'
+import { INITIAL_PLAYER_STATE, type ActiveLoop, type PlayerState } from '$lib/models/player'
 import type { SpotifyTrack } from '$lib/models/spotify'
+import type { PracticeClockOptions } from '$lib/playback/PracticeClock'
 import { createMetronomeViewModel, type MetronomeViewModel } from '../MetronomeViewModel'
 
 function makeTrack(id: string): SpotifyTrack {
@@ -15,38 +16,87 @@ function makeTrack(id: string): SpotifyTrack {
   }
 }
 
+const loop = (startMs: number, endMs: number): ActiveLoop => ({ id: 'bm', startMs, endMs })
+const flush = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
+
 describe('MetronomeViewModel', () => {
   let playerState: ReturnType<typeof writable<PlayerState>>
-  let bpmService: { getBpm: ReturnType<typeof vi.fn> }
-  let storage: { getBpm: ReturnType<typeof vi.fn>; saveBpm: ReturnType<typeof vi.fn> }
+  let player: {
+    togglePlay: Mock<() => Promise<void>>
+    seek: Mock<(positionMs: number) => Promise<void>>
+    getCurrentPositionMs: Mock<() => Promise<number>>
+  }
+  let bpmService: { getBpm: Mock<(id: string) => Promise<number | null>> }
+  let storage: {
+    getBpm: Mock<(id: string) => number | null>
+    saveBpm: Mock<(id: string, bpm: number) => void>
+    getBeatOffsetMs: Mock<(id: string) => number | null>
+    saveBeatOffsetMs: Mock<(id: string, offsetMs: number) => void>
+    clearBeatOffsetMs: Mock<(id: string) => void>
+  }
   let metronome: {
-    start: ReturnType<typeof vi.fn>
-    setBpm: ReturnType<typeof vi.fn>
-    stop: ReturnType<typeof vi.fn>
+    start: Mock<(bpm: number, delayMs?: number) => void>
+    setBpm: Mock<(bpm: number) => void>
+    stop: Mock<() => void>
+  }
+  let clock: {
+    start: Mock<(options: PracticeClockOptions) => void>
+    setLoop: Mock<() => void>
+    stop: Mock<() => void>
   }
   let viewModel: MetronomeViewModel
   let unsubscribe: () => void
 
   const state = () => get(viewModel.metronomeState)
-  const playTrack = (id: string) => playerState.update((s) => ({ ...s, track: makeTrack(id) }))
+  const practicePosition = () => get(viewModel.practicePositionMs)
+  const clockOptions = () => clock.start.mock.calls.at(-1)![0]
+  const update = (changes: Partial<PlayerState>) =>
+    playerState.update((s) => ({ ...s, ...changes }))
+  const playTrack = (id: string, changes: Partial<PlayerState> = {}) =>
+    update({ track: makeTrack(id), durationMs: 200_000, ...changes })
 
   beforeEach(() => {
     playerState = writable({ ...INITIAL_PLAYER_STATE })
+    player = {
+      togglePlay: vi.fn().mockResolvedValue(undefined),
+      seek: vi.fn().mockResolvedValue(undefined),
+      getCurrentPositionMs: vi.fn().mockResolvedValue(0),
+    }
     bpmService = { getBpm: vi.fn().mockResolvedValue(171.001) }
-    storage = { getBpm: vi.fn().mockReturnValue(null), saveBpm: vi.fn() }
+    storage = {
+      getBpm: vi.fn().mockReturnValue(null),
+      saveBpm: vi.fn(),
+      getBeatOffsetMs: vi.fn().mockReturnValue(null),
+      saveBeatOffsetMs: vi.fn(),
+      clearBeatOffsetMs: vi.fn(),
+    }
     metronome = { start: vi.fn(), setBpm: vi.fn(), stop: vi.fn() }
+    clock = { start: vi.fn(), setLoop: vi.fn(), stop: vi.fn() }
     viewModel = createMetronomeViewModel(
-      { playerState },
-      bpmService as never,
-      storage as never,
-      metronome as never,
+      { playerState, ...player },
+      bpmService,
+      storage,
+      metronome,
+      clock,
     )
     unsubscribe = viewModel.metronomeState.subscribe(() => {})
   })
 
+  afterEach(() => unsubscribe())
+
   describe('loading bpm', () => {
     it('is idle without a track', () => {
-      expect(state()).toEqual({ bpm: null, isRunning: false, lookupStatus: 'idle' })
+      expect(state()).toEqual({
+        bpm: null,
+        isRunning: false,
+        lookupStatus: 'idle',
+        mode: 'withSong',
+        beatOffsetMs: null,
+        isSyncing: false,
+        syncTapCount: 0,
+      })
     })
 
     it('fetches, rounds and stores the bpm for a new track', async () => {
@@ -61,7 +111,7 @@ describe('MetronomeViewModel', () => {
     it('uses the stored bpm without a network call', () => {
       storage.getBpm.mockReturnValue(90)
       playTrack('1')
-      expect(state()).toEqual({ bpm: 90, isRunning: false, lookupStatus: 'found' })
+      expect(state()).toMatchObject({ bpm: 90, isRunning: false, lookupStatus: 'found' })
       expect(bpmService.getBpm).not.toHaveBeenCalled()
     })
 
@@ -109,12 +159,10 @@ describe('MetronomeViewModel', () => {
       playTrack('1')
     })
 
-    it('clamps, stores and retimes a running metronome', () => {
-      viewModel.toggle()
+    it('clamps and stores', () => {
       viewModel.setBpm(500)
       expect(state().bpm).toBe(300)
       expect(storage.saveBpm).toHaveBeenCalledWith('1', 300)
-      expect(metronome.setBpm).toHaveBeenCalledWith(300)
     })
 
     it('ignores non-finite values', () => {
@@ -142,40 +190,454 @@ describe('MetronomeViewModel', () => {
     })
   })
 
-  describe('start and stop', () => {
-    it('does nothing without a bpm', () => {
-      viewModel.toggle()
-      expect(metronome.start).not.toHaveBeenCalled()
-      expect(state().isRunning).toBe(false)
+  describe('with the song', () => {
+    beforeEach(() => {
+      storage.getBpm.mockReturnValue(120)
+      playTrack('1', { isPlaying: true })
     })
 
-    it('starts and stops the metronome', () => {
-      storage.getBpm.mockReturnValue(120)
-      playTrack('1')
+    it('does nothing without a bpm', () => {
+      storage.getBpm.mockReturnValue(null)
+      bpmService.getBpm.mockResolvedValue(null)
+      playTrack('2')
       viewModel.toggle()
-      expect(metronome.start).toHaveBeenCalledWith(120)
+      expect(state().isRunning).toBe(false)
+      expect(metronome.start).not.toHaveBeenCalled()
+    })
+
+    it('aligns the first click to the beat grid of the song position', async () => {
+      player.getCurrentPositionMs.mockResolvedValue(1100)
+      viewModel.toggle()
+      await flush()
       expect(state().isRunning).toBe(true)
+      expect(metronome.start).toHaveBeenCalledWith(120, 400)
+    })
+
+    it('anchors the grid at the active loop start', async () => {
+      update({ activeLoop: loop(250, 5000) })
+      player.getCurrentPositionMs.mockResolvedValue(1100)
+      viewModel.toggle()
+      await flush()
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 150)
+    })
+
+    it('waits for playback when the song is paused, then starts in time', async () => {
+      update({ isPlaying: false })
+      viewModel.toggle()
+      await flush()
+      expect(state().isRunning).toBe(true)
+      expect(metronome.start).not.toHaveBeenCalled()
+
+      player.getCurrentPositionMs.mockResolvedValue(0)
+      update({ isPlaying: true })
+      await flush()
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('silences clicks while the song is paused', async () => {
+      viewModel.toggle()
+      await flush()
+      metronome.stop.mockClear()
+      update({ isPlaying: false })
+      expect(metronome.stop).toHaveBeenCalled()
+      expect(state().isRunning).toBe(true)
+    })
+
+    it('realigns when the bpm changes or the loop changes', async () => {
+      viewModel.toggle()
+      await flush()
+      metronome.start.mockClear()
+      viewModel.setBpm(90)
+      await flush()
+      expect(metronome.start).toHaveBeenCalledWith(90, 0)
+
+      metronome.start.mockClear()
+      update({ activeLoop: loop(0, 4000) })
+      await flush()
+      expect(metronome.start).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops with toggle', async () => {
+      viewModel.toggle()
+      await flush()
       viewModel.toggle()
       expect(metronome.stop).toHaveBeenCalled()
       expect(state().isRunning).toBe(false)
     })
 
-    it('stops when the track changes', () => {
-      storage.getBpm.mockReturnValue(120)
-      playTrack('1')
+    it('stops when the track changes', async () => {
       viewModel.toggle()
+      await flush()
       playTrack('2')
       expect(state().isRunning).toBe(false)
-      expect(metronome.stop).toHaveBeenCalled()
     })
 
-    it('stops when nothing is subscribed any more', () => {
-      storage.getBpm.mockReturnValue(120)
-      playTrack('1')
+    it('stops when nothing is subscribed any more', async () => {
       viewModel.toggle()
+      await flush()
       metronome.stop.mockClear()
       unsubscribe()
       expect(metronome.stop).toHaveBeenCalled()
+    })
+
+    it('seeks to a clicked lyric line and resumes a paused song', async () => {
+      update({ isPlaying: false })
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(31_000)
+      expect(player.togglePlay).toHaveBeenCalledTimes(1)
+    })
+
+    it('only seeks when the song is already playing', async () => {
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(31_000)
+      expect(player.togglePlay).not.toHaveBeenCalled()
+    })
+
+    it('ignores clicked lines while a loop is active', async () => {
+      update({ activeLoop: loop(12_000, 20_000) })
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      expect(player.seek).not.toHaveBeenCalled()
+    })
+
+    describe('position jumps', () => {
+      beforeEach(() => vi.useFakeTimers())
+      afterEach(() => vi.useRealTimers())
+
+      it('realigns after a seek but not after normal progress', async () => {
+        update({ positionMs: 1000 })
+        viewModel.toggle()
+        await flush()
+        metronome.start.mockClear()
+
+        vi.advanceTimersByTime(500)
+        update({ positionMs: 1500 })
+        await flush()
+        expect(metronome.start).not.toHaveBeenCalled()
+
+        vi.advanceTimersByTime(500)
+        update({ positionMs: 30_000 })
+        await flush()
+        expect(metronome.start).toHaveBeenCalledTimes(1)
+      })
+    })
+  })
+
+  describe('beat sync', () => {
+    const tapAt = async (positionMs: number) => {
+      player.getCurrentPositionMs.mockResolvedValueOnce(positionMs)
+      viewModel.tapBeat()
+      await flush()
+    }
+
+    beforeEach(() => {
+      storage.getBpm.mockReturnValue(120) // 500 ms per beat
+      playTrack('1', { isPlaying: true })
+    })
+
+    it('only starts syncing while the song plays with a bpm', () => {
+      update({ isPlaying: false })
+      viewModel.toggleSync()
+      expect(state().isSyncing).toBe(false)
+
+      update({ isPlaying: true })
+      viewModel.toggleSync()
+      expect(state().isSyncing).toBe(true)
+      viewModel.toggleSync()
+      expect(state().isSyncing).toBe(false)
+    })
+
+    it('does not sync in silent mode', () => {
+      viewModel.setMode('silent')
+      viewModel.toggleSync()
+      expect(state().isSyncing).toBe(false)
+    })
+
+    it('ignores taps when not syncing', async () => {
+      await tapAt(130)
+      expect(state().syncTapCount).toBe(0)
+      expect(player.getCurrentPositionMs).not.toHaveBeenCalled()
+    })
+
+    it('stores the beat offset once enough taps agree', async () => {
+      viewModel.toggleSync()
+      await tapAt(130)
+      await tapAt(630)
+      await tapAt(1130)
+      expect(state().beatOffsetMs).toBeNull()
+      await tapAt(1630)
+      expect(state().beatOffsetMs).toBeCloseTo(130, 5)
+      expect(storage.saveBeatOffsetMs).toHaveBeenLastCalledWith('1', expect.closeTo(130, 5))
+      expect(state().syncTapCount).toBe(4)
+      expect(state().isSyncing).toBe(true)
+    })
+
+    it('finishes after the maximum number of taps', async () => {
+      viewModel.toggleSync()
+      for (let beat = 0; beat < 8; beat++) await tapAt(130 + beat * 500)
+      expect(state().isSyncing).toBe(false)
+      expect(state().beatOffsetMs).toBeCloseTo(130, 5)
+    })
+
+    it('cancels syncing when the song pauses, the mode changes or the track changes', () => {
+      viewModel.toggleSync()
+      update({ isPlaying: false })
+      expect(state().isSyncing).toBe(false)
+
+      update({ isPlaying: true })
+      viewModel.toggleSync()
+      viewModel.setMode('silent')
+      expect(state().isSyncing).toBe(false)
+      viewModel.setMode('withSong')
+
+      update({ isPlaying: true })
+      viewModel.toggleSync()
+      playTrack('2')
+      expect(state().isSyncing).toBe(false)
+    })
+
+    it('aligns clicks to the synced beat grid instead of 0:00', async () => {
+      storage.getBeatOffsetMs.mockReturnValue(130)
+      playTrack('2')
+      player.getCurrentPositionMs.mockResolvedValue(1000)
+      viewModel.toggle()
+      await flush()
+      // beats at 130, 630, 1130: the next one after 1000 is 130 ms away
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 130)
+    })
+
+    it('prefers the synced grid over the loop start', async () => {
+      storage.getBeatOffsetMs.mockReturnValue(130)
+      playTrack('2')
+      update({ activeLoop: loop(250, 5000) })
+      player.getCurrentPositionMs.mockResolvedValue(1000)
+      viewModel.toggle()
+      await flush()
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 130)
+    })
+
+    it('loads the stored offset for the track', () => {
+      storage.getBeatOffsetMs.mockReturnValue(222)
+      playTrack('2')
+      expect(storage.getBeatOffsetMs).toHaveBeenCalledWith('2')
+      expect(state().beatOffsetMs).toBe(222)
+    })
+
+    it('realigns running clicks when the offset changes', async () => {
+      storage.getBeatOffsetMs.mockReturnValue(130)
+      playTrack('2')
+      player.getCurrentPositionMs.mockResolvedValue(1000)
+      viewModel.toggle()
+      await flush()
+      metronome.start.mockClear()
+      viewModel.nudgeBeatOffset(10)
+      await flush()
+      // beats now fall at 140, 640, 1140: the next one after 1000 is 140 ms away
+      expect(metronome.start).toHaveBeenCalledWith(120, 140)
+    })
+
+    it('nudges and stores the offset, wrapping within a beat', () => {
+      storage.getBeatOffsetMs.mockReturnValue(495)
+      playTrack('2')
+      viewModel.nudgeBeatOffset(10)
+      expect(state().beatOffsetMs).toBe(5)
+      expect(storage.saveBeatOffsetMs).toHaveBeenCalledWith('2', 5)
+    })
+
+    it('ignores nudges before the song is synced', () => {
+      viewModel.nudgeBeatOffset(10)
+      expect(state().beatOffsetMs).toBeNull()
+      expect(storage.saveBeatOffsetMs).not.toHaveBeenCalled()
+    })
+
+    it('forgets the sync', () => {
+      storage.getBeatOffsetMs.mockReturnValue(130)
+      playTrack('2')
+      viewModel.resetSync()
+      expect(state().beatOffsetMs).toBeNull()
+      expect(storage.clearBeatOffsetMs).toHaveBeenCalledWith('2')
+    })
+
+    it('starts silent clicks and loop laps on the synced grid', () => {
+      storage.getBeatOffsetMs.mockReturnValue(130)
+      playTrack('2')
+      update({ activeLoop: loop(1000, 5000) })
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      // beats at 130, 630, 1130: the loop start at 1000 is 130 ms before the next beat
+      expect(metronome.start).toHaveBeenLastCalledWith(120, 130)
+      metronome.start.mockClear()
+      clockOptions().onWrap()
+      expect(metronome.start).toHaveBeenCalledWith(120, 130)
+    })
+
+    it('uses the latest bpm for loop laps', () => {
+      update({ activeLoop: loop(1000, 5000) })
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      viewModel.setBpm(90)
+      metronome.start.mockClear()
+      clockOptions().onWrap()
+      expect(metronome.start).toHaveBeenCalledWith(90, 0)
+    })
+  })
+
+  describe('silent practice', () => {
+    beforeEach(() => {
+      storage.getBpm.mockReturnValue(120)
+      playTrack('1')
+    })
+
+    it('pauses Spotify when switching to silent and shows the start position', () => {
+      update({ isPlaying: true })
+      viewModel.setMode('silent')
+      expect(player.togglePlay).toHaveBeenCalledTimes(1)
+      expect(state().mode).toBe('silent')
+      expect(practicePosition()).toBe(0)
+    })
+
+    it('does not touch Spotify when it is already paused', () => {
+      viewModel.setMode('silent')
+      expect(player.togglePlay).not.toHaveBeenCalled()
+    })
+
+    it('starts the clock and clicks from 0:00 without a loop', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      expect(state().isRunning).toBe(true)
+      expect(clockOptions()).toMatchObject({ startMs: 0, loop: null, trackEndMs: 200_000 })
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('starts from the active loop and repeats it', () => {
+      update({ activeLoop: loop(12_000, 20_000) })
+      viewModel.setMode('silent')
+      expect(practicePosition()).toBe(12_000)
+      viewModel.toggle()
+      expect(clockOptions()).toMatchObject({
+        startMs: 12_000,
+        loop: { startMs: 12_000, endMs: 20_000 },
+      })
+    })
+
+    it('publishes clock positions to the lyrics', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      clockOptions().onPosition(4321)
+      expect(practicePosition()).toBe(4321)
+    })
+
+    it('restarts the click grid on every loop lap', () => {
+      update({ activeLoop: loop(1000, 5000) })
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      metronome.start.mockClear()
+      clockOptions().onWrap()
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('stops at the end of the track and returns to the start position', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      clockOptions().onPosition(150_000)
+      clockOptions().onEnd()
+      expect(state().isRunning).toBe(false)
+      expect(metronome.stop).toHaveBeenCalled()
+      expect(practicePosition()).toBe(0)
+    })
+
+    it('starts clock and clicks from a clicked lyric line', () => {
+      viewModel.setMode('silent')
+      viewModel.playFromLyricLine(31_000)
+      expect(state().isRunning).toBe(true)
+      expect(clockOptions()).toMatchObject({ startMs: 31_000, loop: null })
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('jumps to another clicked line while running', () => {
+      viewModel.setMode('silent')
+      viewModel.playFromLyricLine(31_000)
+      clock.start.mockClear()
+      viewModel.playFromLyricLine(45_000)
+      expect(clockOptions().startMs).toBe(45_000)
+    })
+
+    it('only moves the start position when there is no bpm to click at', () => {
+      storage.getBpm.mockReturnValue(null)
+      bpmService.getBpm.mockResolvedValue(null)
+      playTrack('2')
+      viewModel.setMode('silent')
+      viewModel.playFromLyricLine(31_000)
+      expect(practicePosition()).toBe(31_000)
+      expect(state().isRunning).toBe(false)
+      expect(clock.start).not.toHaveBeenCalled()
+    })
+
+    it('ignores clicked lines while a loop is active', () => {
+      update({ activeLoop: loop(12_000, 20_000) })
+      viewModel.setMode('silent')
+      viewModel.playFromLyricLine(31_000)
+      expect(practicePosition()).toBe(12_000)
+      expect(state().isRunning).toBe(false)
+      expect(player.seek).not.toHaveBeenCalled()
+    })
+
+    it('goes back to the clicked line once the loop is removed', () => {
+      viewModel.setMode('silent')
+      viewModel.playFromLyricLine(31_000)
+      viewModel.toggle()
+      update({ activeLoop: loop(12_000, 20_000) })
+      expect(practicePosition()).toBe(12_000)
+      update({ activeLoop: null })
+      expect(practicePosition()).toBe(31_000)
+    })
+
+    it('restarts from the loop start when a loop is activated while running', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      clock.start.mockClear()
+      update({ activeLoop: loop(8000, 16_000) })
+      expect(clockOptions()).toMatchObject({
+        startMs: 8000,
+        loop: { startMs: 8000, endMs: 16_000 },
+      })
+    })
+
+    it('keeps running without the loop when it is removed', () => {
+      update({ activeLoop: loop(8000, 16_000) })
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      clock.start.mockClear()
+      update({ activeLoop: null })
+      expect(clock.setLoop).toHaveBeenCalledWith(null)
+      expect(clock.start).not.toHaveBeenCalled()
+    })
+
+    it('returns to playing with the song when Spotify starts', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      update({ isPlaying: true })
+      expect(state()).toMatchObject({ mode: 'withSong', isRunning: false })
+      expect(practicePosition()).toBeNull()
+      expect(clock.stop).toHaveBeenCalled()
+    })
+
+    it('keeps silent mode and resets the position when the track changes', () => {
+      viewModel.setMode('silent')
+      viewModel.playFromLyricLine(31_000)
+      playTrack('2')
+      expect(state().mode).toBe('silent')
+      expect(practicePosition()).toBe(0)
+    })
+
+    it('stops the clock when nothing is subscribed any more', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      clock.stop.mockClear()
+      unsubscribe()
+      expect(clock.stop).toHaveBeenCalled()
     })
   })
 })

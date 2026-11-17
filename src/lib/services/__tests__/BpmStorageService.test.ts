@@ -21,4 +21,22 @@ describe('BpmStorageService', () => {
     localStorage.setItem('bpm_t1', 'abc')
     expect(storage.getBpm('t1')).toBeNull()
   })
+
+  it('stores beat offsets per track, including zero, and can clear them', () => {
+    expect(storage.getBeatOffsetMs('t1')).toBeNull()
+    storage.saveBeatOffsetMs('t1', 130.5)
+    expect(storage.getBeatOffsetMs('t1')).toBe(130.5)
+    expect(localStorage.getItem('beatoffset_t1')).toBe('130.5')
+    storage.saveBeatOffsetMs('t1', 0)
+    expect(storage.getBeatOffsetMs('t1')).toBe(0)
+    storage.clearBeatOffsetMs('t1')
+    expect(storage.getBeatOffsetMs('t1')).toBeNull()
+  })
+
+  it('returns null for corrupt or negative offsets', () => {
+    localStorage.setItem('beatoffset_t1', 'abc')
+    expect(storage.getBeatOffsetMs('t1')).toBeNull()
+    localStorage.setItem('beatoffset_t1', '-5')
+    expect(storage.getBeatOffsetMs('t1')).toBeNull()
+  })
 })
