@@ -1,4 +1,9 @@
 import { BookmarkStorageService } from '$lib/services/BookmarkStorageService'
+import { ReccoBeatsBpmService } from '$lib/services/BpmService'
+import { BpmStorageService } from '$lib/services/BpmStorageService'
+import { LrclibLyricsService } from '$lib/services/LyricsService'
+import { LyricsStorageService } from '$lib/services/LyricsStorageService'
+import { WebAudioMetronomeService } from '$lib/services/MetronomeService'
 import { BrowserNavigationService } from '$lib/services/NavigationService'
 import { SpotifyApiService } from '$lib/services/SpotifyApiService'
 import { SpotifyAuthService } from '$lib/services/SpotifyAuthService'
@@ -8,6 +13,8 @@ import { createAuthViewModel } from '$lib/viewmodels/AuthViewModel'
 import { createBookmarkEditorViewModel } from '$lib/viewmodels/BookmarkEditorViewModel'
 import { createBookmarkViewModel } from '$lib/viewmodels/BookmarkViewModel'
 import { createCallbackViewModel } from '$lib/viewmodels/CallbackViewModel'
+import { createLyricsViewModel } from '$lib/viewmodels/LyricsViewModel'
+import { createMetronomeViewModel } from '$lib/viewmodels/MetronomeViewModel'
 import { createPlayerViewModel } from '$lib/viewmodels/PlayerViewModel'
 import { createPlaylistViewModel } from '$lib/viewmodels/PlaylistViewModel'
 
@@ -27,6 +34,17 @@ export const bookmarkViewModel = createBookmarkViewModel(new BookmarkStorageServ
 export const bookmarkEditorViewModel = createBookmarkEditorViewModel(
   bookmarkViewModel,
   playerViewModel,
+)
+export const lyricsViewModel = createLyricsViewModel(
+  playerViewModel,
+  new LrclibLyricsService(),
+  new LyricsStorageService(),
+)
+export const metronomeViewModel = createMetronomeViewModel(
+  playerViewModel,
+  new ReccoBeatsBpmService(),
+  new BpmStorageService(),
+  new WebAudioMetronomeService(),
 )
 export const playlistViewModel = createPlaylistViewModel(apiService)
 export const callbackViewModel = createCallbackViewModel(

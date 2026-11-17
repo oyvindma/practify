@@ -7,6 +7,8 @@
   import PlayerControls from './components/Player/PlayerControls.svelte'
   import BookmarkList from './components/Bookmarks/BookmarkList.svelte'
   import BookmarkEditor from './components/Bookmarks/BookmarkEditor.svelte'
+  import MetronomePanel from './components/Metronome/MetronomePanel.svelte'
+  import LyricsPanel from './components/Lyrics/LyricsPanel.svelte'
   import Callback from './routes/callback/Callback.svelte'
 
   const { isCallbackRoute, isAuthenticated, start } = appViewModel
@@ -71,6 +73,17 @@
               <p class="text-gray-500 text-sm">Spill en låt for å lagre loops.</p>
             {/if}
           </div>
+          {#if $playerState.track}
+            <div class="shrink-0 px-5 pb-5">
+              <MetronomePanel />
+            </div>
+          {/if}
+          <!-- Lyrics: scrolls internally with the song -->
+          {#if $playerState.track}
+            <div class="shrink-0 px-5 pb-5">
+              <LyricsPanel />
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -79,6 +92,8 @@
         <PlayerControls />
         {#if $playerState.track}
           <BookmarkList />
+          <MetronomePanel />
+          <LyricsPanel />
         {/if}
         {#if $playlistState.selectedPlaylist}
           <TrackList />
