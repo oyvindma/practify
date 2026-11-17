@@ -114,4 +114,35 @@ describe('PracticeClock', () => {
     advance(8500)
     expect(onEnd).toHaveBeenCalledTimes(1)
   })
+
+  it('continues from a new position after seekTo', () => {
+    start({ startMs: 1000 })
+    advance(500)
+    clock.seekTo(5000)
+    expect(positions.at(-1)).toBe(5000)
+    advance(100)
+    expect(positions.at(-1)).toBe(5100)
+  })
+
+  it('ends at the track end measured from the seeked position', () => {
+    start({ startMs: 0 })
+    clock.seekTo(9500)
+    advance(499)
+    expect(onEnd).not.toHaveBeenCalled()
+    advance(1)
+    expect(onEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('wraps when seeking past the loop end', () => {
+    start({ startMs: 1000, loop: { startMs: 1000, endMs: 3000 } })
+    clock.seekTo(3500)
+    advance(0)
+    expect(onWrap).toHaveBeenCalledTimes(1)
+    expect(positions.at(-1)).toBe(1000)
+  })
+
+  it('ignores seekTo when stopped', () => {
+    clock.seekTo(5000)
+    expect(positions).toEqual([])
+  })
 })

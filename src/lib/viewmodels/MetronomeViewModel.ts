@@ -44,6 +44,11 @@ export interface MetronomeViewModel {
   resetSync(): void
   setMode(mode: PracticeMode): void
   playFromLyricLine(startMs: number): void
+  // Restart from the loop start, else the clicked lyric line, else the beginning
+  restart(): void
+  // Moves the practice position while silent; the song is moved through the player
+  seekTo(positionMs: number): void
+  currentPracticePositionMs(): number | null
 }
 
 export interface MetronomePlayerSource {
@@ -92,6 +97,9 @@ export function createMetronomeViewModel(
   let playerSnapshot: PlayerState = INITIAL_PLAYER_STATE
   let previousLoopKey: string | null = null
   let pickedLineStartMs: number | null = null
+  let practicePositionMs: number | null = null
+  // A silent session that was running when the track changed carries on once the new bpm is known
+  let resumeSilentOnBpm = false
   let lastPositionSample: PositionSample | null = null
   let syncTapPositionsMs: number[] = []
 
@@ -107,12 +115,17 @@ export function createMetronomeViewModel(
     commit({ ...current, ...changes })
   }
 
-  function silentStartMs(): number {
+  function publishPracticePosition(positionMs: number | null) {
+    practicePositionMs = positionMs
+    practicePosition.set(positionMs)
+  }
+
+  function restartPointMs(): number {
     return playerSnapshot.activeLoop?.startMs ?? pickedLineStartMs ?? 0
   }
 
   function showSilentStartPosition() {
-    practicePosition.set(silentStartMs())
+    publishPracticePosition(restartPointMs())
   }
 
   // Without a synced beat grid the clicks simply start together with the position
@@ -125,13 +138,13 @@ export function createMetronomeViewModel(
     metronome.start(current.bpm, delayMs)
   }
 
-  function startSilentSession(startMs: number = silentStartMs()) {
+  function startSilentSession(startMs: number = restartPointMs()) {
     if (current.bpm === null) return
     practiceClock.start({
       startMs,
       loop: toRange(playerSnapshot.activeLoop),
       trackEndMs: playerSnapshot.durationMs,
-      onPosition: (positionMs) => practicePosition.set(positionMs),
+      onPosition: publishPracticePosition,
       // Loops rarely span a whole number of beats, so the click grid restarts on every lap
       onWrap: () => startClicksAt(playerSnapshot.activeLoop?.startMs ?? 0),
       onEnd: stopSession,
@@ -158,6 +171,13 @@ export function createMetronomeViewModel(
   async function seekAndPlay(positionMs: number) {
     await player.seek(positionMs)
     if (!playerSnapshot.isPlaying) await player.togglePlay()
+  }
+
+  function resumeSilentIfReady() {
+    if (!resumeSilentOnBpm || current.mode !== 'silent' || current.bpm === null) return
+    resumeSilentOnBpm = false
+    patch({ isRunning: true })
+    startSilentSession()
   }
 
   function stopSession() {
@@ -193,6 +213,7 @@ export function createMetronomeViewModel(
 
   function setMode(mode: PracticeMode) {
     if (mode === current.mode) return
+    resumeSilentOnBpm = false
     cancelSync()
     stopSession()
     if (mode === 'silent') {
@@ -201,7 +222,7 @@ export function createMetronomeViewModel(
       showSilentStartPosition()
     } else {
       patch({ mode })
-      practicePosition.set(null)
+      publishPracticePosition(null)
     }
   }
 
@@ -210,6 +231,7 @@ export function createMetronomeViewModel(
     const bpm = clampBpm(value)
     bpmStorage.saveBpm(currentTrackId, bpm)
     patch({ bpm, lookupStatus: 'found' })
+    resumeSilentIfReady()
     if (!current.isRunning) return
     if (current.mode === 'withSong') void alignClicksToSong()
     else metronome.setBpm(bpm)
@@ -237,6 +259,7 @@ export function createMetronomeViewModel(
         const bpm = clampBpm(tempo)
         bpmStorage.saveBpm(trackId, bpm)
         patch({ bpm, lookupStatus: 'found' })
+        resumeSilentIfReady()
       })
       .catch(() => {
         if (currentTrackId !== trackId) return
@@ -245,6 +268,7 @@ export function createMetronomeViewModel(
   }
 
   function handleTrackChange(track: SpotifyTrack | null) {
+    resumeSilentOnBpm = track !== null && current.mode === 'silent' && current.isRunning
     currentTrackId = track?.id ?? null
     tapTimestampsMs = []
     pickedLineStartMs = null
@@ -313,17 +337,19 @@ export function createMetronomeViewModel(
       handleLoopChange(next.activeLoop)
       handlePlayingChange(previous.isPlaying, next.isPlaying)
       handlePositionSample(next.positionMs, next.isPlaying)
+      resumeSilentIfReady()
     })
 
     return () => {
       unsubscribe()
       practiceClock.stop()
       metronome.stop()
+      resumeSilentOnBpm = false
       currentTrackId = null
       previousLoopKey = null
       playerSnapshot = INITIAL_PLAYER_STATE
       commit(INITIAL_STATE)
-      practicePosition.set(null)
+      publishPracticePosition(null)
     }
   })
 
@@ -364,6 +390,7 @@ export function createMetronomeViewModel(
     },
 
     toggle() {
+      resumeSilentOnBpm = false
       if (current.isRunning) {
         stopSession()
         return
@@ -405,11 +432,11 @@ export function createMetronomeViewModel(
     playFromLyricLine(startMs) {
       // An active loop decides where practice starts
       if (playerSnapshot.activeLoop) return
+      pickedLineStartMs = startMs
       if (current.mode === 'withSong') {
         void seekAndPlay(startMs)
         return
       }
-      pickedLineStartMs = startMs
       if (current.bpm === null) {
         showSilentStartPosition()
         return
@@ -417,5 +444,34 @@ export function createMetronomeViewModel(
       patch({ isRunning: true })
       startSilentSession(startMs)
     },
+
+    restart() {
+      if (current.mode === 'withSong') {
+        void seekAndPlay(restartPointMs())
+        return
+      }
+      if (current.bpm === null) {
+        showSilentStartPosition()
+        return
+      }
+      patch({ isRunning: true })
+      startSilentSession()
+    },
+
+    seekTo(positionMs) {
+      if (current.mode !== 'silent') return
+      const targetMs = Math.max(0, positionMs)
+      if (current.isRunning) {
+        practiceClock.seekTo(targetMs)
+        startClicksAt(targetMs)
+        return
+      }
+      // An active loop decides where practice starts
+      if (playerSnapshot.activeLoop) return
+      pickedLineStartMs = targetMs
+      showSilentStartPosition()
+    },
+
+    currentPracticePositionMs: () => practicePositionMs,
   }
 }

@@ -282,6 +282,85 @@ describe('PlayerViewModel', () => {
     })
   })
 
+  describe('selectTrackWithoutPlaying', () => {
+    const silentTrack: SpotifyTrack = {
+      ...track,
+      id: 't7',
+      uri: 'spotify:track:t7',
+      name: 'Silent',
+      duration_ms: 123_000,
+    }
+
+    beforeEach(async () => {
+      await initAndBecomeReady()
+      listeners.onPlaybackChanged({ positionMs: 9000, durationMs: 100_000, isPaused: true, track })
+    })
+
+    it('switches track, clears the loop and resets the position without calling Spotify', () => {
+      viewModel.activateLoop({ id: 'x', startMs: 0, endMs: 10 })
+      viewModel.selectTrackWithoutPlaying(silentTrack)
+      expect(state()).toMatchObject({
+        track: silentTrack,
+        activeLoop: null,
+        positionMs: 0,
+        durationMs: 123_000,
+        isPlaying: false,
+      })
+      expect(apiService.startPlayback).not.toHaveBeenCalled()
+      expect(playerService.resume).not.toHaveBeenCalled()
+    })
+
+    it('ignores what the SDK reports about its previous track', () => {
+      viewModel.selectTrackWithoutPlaying(silentTrack)
+      listeners.onPlaybackChanged({ positionMs: 9500, durationMs: 100_000, isPaused: true, track })
+      listeners.onPlaybackChanged({ positionMs: 9600, durationMs: 100_000, isPaused: false, track })
+      expect(state()).toMatchObject({ track: silentTrack, positionMs: 0, durationMs: 123_000 })
+      expect(state().isPlaying).toBe(false)
+    })
+
+    it('starts the selected track, not the SDK one, when play is pressed', async () => {
+      viewModel.selectTrackWithoutPlaying(silentTrack)
+      await viewModel.togglePlay()
+      expect(apiService.startPlayback).toHaveBeenCalledWith('device-1', silentTrack.uri)
+      expect(playerService.resume).not.toHaveBeenCalled()
+    })
+
+    it('follows the SDK again once the selected track plays', async () => {
+      viewModel.selectTrackWithoutPlaying(silentTrack)
+      await viewModel.togglePlay()
+      listeners.onPlaybackChanged({
+        positionMs: 100,
+        durationMs: 123_000,
+        isPaused: false,
+        track: silentTrack,
+      })
+      expect(state()).toMatchObject({ track: silentTrack, positionMs: 100, isPlaying: true })
+
+      listeners.onPlaybackChanged({
+        positionMs: 5,
+        durationMs: 100_000,
+        isPaused: false,
+        track: { ...track, id: 't9' },
+      })
+      expect(state().track?.id).toBe('t9')
+    })
+
+    it('can be followed by a normal playTrack', async () => {
+      viewModel.selectTrackWithoutPlaying(silentTrack)
+      await viewModel.playTrack(track)
+      expect(apiService.startPlayback).toHaveBeenCalledWith('device-1', track.uri)
+      expect(state().track).toEqual(track)
+    })
+
+    it('resets the withheld track on destroy', async () => {
+      viewModel.selectTrackWithoutPlaying(silentTrack)
+      viewModel.destroy()
+      await initAndBecomeReady()
+      listeners.onPlaybackChanged({ positionMs: 1, durationMs: 100_000, isPaused: false, track })
+      expect(state().track).toEqual(track)
+    })
+  })
+
   describe('togglePlay', () => {
     it('pauses when playing and resumes when paused', async () => {
       await initAndBecomeReady()

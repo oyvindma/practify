@@ -12,6 +12,7 @@ export interface PracticeClockOptions {
 export interface IPracticeClock {
   start(options: PracticeClockOptions): void
   setLoop(loop: LoopRange | null): void
+  seekTo(positionMs: number): void
   stop(): void
 }
 
@@ -48,6 +49,13 @@ export class PracticeClock implements IPracticeClock {
     if (!this.options) return
     this.anchorAt(this.positionMs())
     this.options = { ...this.options, loop: usableLoop(loop) }
+    this.scheduleBoundary()
+  }
+
+  seekTo(positionMs: number): void {
+    if (!this.options) return
+    this.anchorAt(positionMs)
+    this.options.onPosition(positionMs)
     this.scheduleBoundary()
   }
 

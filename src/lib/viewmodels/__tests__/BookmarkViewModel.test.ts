@@ -121,3 +121,63 @@ describe('BookmarkViewModel – sorting and track scoping', () => {
     expect(bookmarks()).toHaveLength(0)
   })
 })
+
+describe('BookmarkViewModel – selection', () => {
+  const selected = () => get(viewModel.selectedBookmarkId)
+
+  function addThree() {
+    viewModel.showBookmarksForTrack(TRACK_ID)
+    viewModel.addBookmark({ name: 'C', startMs: 30_000, endMs: 40_000 })
+    viewModel.addBookmark({ name: 'A', startMs: 0, endMs: 10_000 })
+    viewModel.addBookmark({ name: 'B', startMs: 10_000, endMs: 20_000 })
+  }
+  const selectedName = () => bookmarks().find((b) => b.id === selected())?.name
+
+  it('starts without a selection', () => {
+    addThree()
+    expect(selected()).toBeNull()
+  })
+
+  it('moves through the loops in time order and clamps at the ends', () => {
+    addThree()
+    viewModel.selectNextBookmark()
+    expect(selectedName()).toBe('A')
+    viewModel.selectNextBookmark()
+    expect(selectedName()).toBe('B')
+    viewModel.selectNextBookmark()
+    viewModel.selectNextBookmark()
+    expect(selectedName()).toBe('C')
+    viewModel.selectPreviousBookmark()
+    expect(selectedName()).toBe('B')
+  })
+
+  it('selects the last loop when going up without a selection', () => {
+    addThree()
+    viewModel.selectPreviousBookmark()
+    expect(selectedName()).toBe('C')
+  })
+
+  it('does nothing without loops', () => {
+    viewModel.showBookmarksForTrack(TRACK_ID)
+    viewModel.selectNextBookmark()
+    expect(selected()).toBeNull()
+  })
+
+  it('selects a given loop', () => {
+    addThree()
+    const target = bookmarks()[1]
+    viewModel.selectBookmark(target.id)
+    expect(selected()).toBe(target.id)
+  })
+
+  it('clears the selection when the loop is deleted or the track changes', () => {
+    addThree()
+    viewModel.selectNextBookmark()
+    viewModel.deleteBookmark(selected()!)
+    expect(selected()).toBeNull()
+
+    viewModel.selectNextBookmark()
+    viewModel.showBookmarksForTrack('another-track')
+    expect(selected()).toBeNull()
+  })
+})

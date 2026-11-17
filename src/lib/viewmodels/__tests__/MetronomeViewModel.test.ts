@@ -44,6 +44,7 @@ describe('MetronomeViewModel', () => {
   let clock: {
     start: Mock<(options: PracticeClockOptions) => void>
     setLoop: Mock<() => void>
+    seekTo: Mock<(positionMs: number) => void>
     stop: Mock<() => void>
   }
   let viewModel: MetronomeViewModel
@@ -73,7 +74,7 @@ describe('MetronomeViewModel', () => {
       clearBeatOffsetMs: vi.fn(),
     }
     metronome = { start: vi.fn(), setBpm: vi.fn(), stop: vi.fn() }
-    clock = { start: vi.fn(), setLoop: vi.fn(), stop: vi.fn() }
+    clock = { start: vi.fn(), setLoop: vi.fn(), seekTo: vi.fn(), stop: vi.fn() }
     viewModel = createMetronomeViewModel(
       { playerState, ...player },
       bpmService,
@@ -638,6 +639,168 @@ describe('MetronomeViewModel', () => {
       clock.stop.mockClear()
       unsubscribe()
       expect(clock.stop).toHaveBeenCalled()
+    })
+  })
+
+  describe('restart and seeking', () => {
+    beforeEach(() => {
+      storage.getBpm.mockReturnValue(120)
+      playTrack('1', { isPlaying: true })
+    })
+
+    it('restarts the song from the beginning and resumes when paused', async () => {
+      update({ isPlaying: false })
+      viewModel.restart()
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(0)
+      expect(player.togglePlay).toHaveBeenCalledTimes(1)
+    })
+
+    it('restarts from the active loop start', async () => {
+      update({ activeLoop: loop(12_000, 20_000) })
+      viewModel.restart()
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(12_000)
+      expect(player.togglePlay).not.toHaveBeenCalled()
+    })
+
+    it('restarts from the lyric line the song was started from', async () => {
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      player.seek.mockClear()
+      viewModel.restart()
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(31_000)
+    })
+
+    it('forgets the line when the track changes', async () => {
+      viewModel.playFromLyricLine(31_000)
+      await flush()
+      playTrack('2', { isPlaying: true })
+      player.seek.mockClear()
+      viewModel.restart()
+      await flush()
+      expect(player.seek).toHaveBeenCalledWith(0)
+    })
+
+    it('restarts a silent session from the loop start, line or beginning', () => {
+      viewModel.setMode('silent')
+      viewModel.restart()
+      expect(state().isRunning).toBe(true)
+      expect(clockOptions().startMs).toBe(0)
+
+      viewModel.playFromLyricLine(31_000)
+      clock.start.mockClear()
+      viewModel.restart()
+      expect(clockOptions().startMs).toBe(31_000)
+    })
+
+    it('only shows the start position when silent without a bpm', () => {
+      storage.getBpm.mockReturnValue(null)
+      bpmService.getBpm.mockResolvedValue(null)
+      playTrack('2')
+      viewModel.setMode('silent')
+      viewModel.restart()
+      expect(state().isRunning).toBe(false)
+      expect(clock.start).not.toHaveBeenCalled()
+    })
+
+    it('seeks the running silent clock and realigns the clicks', () => {
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      metronome.start.mockClear()
+      viewModel.seekTo(45_000)
+      expect(clock.seekTo).toHaveBeenCalledWith(45_000)
+      expect(metronome.start).toHaveBeenCalledWith(120, 0)
+    })
+
+    it('moves the start position when silent and stopped, unless a loop decides', () => {
+      viewModel.setMode('silent')
+      viewModel.seekTo(5000)
+      expect(practicePosition()).toBe(5000)
+      expect(viewModel.currentPracticePositionMs()).toBe(5000)
+
+      update({ activeLoop: loop(12_000, 20_000) })
+      viewModel.seekTo(7000)
+      expect(practicePosition()).toBe(12_000)
+    })
+
+    it('does not seek when the song drives and has no practice position', () => {
+      viewModel.seekTo(5000)
+      expect(clock.seekTo).not.toHaveBeenCalled()
+      expect(viewModel.currentPracticePositionMs()).toBeNull()
+    })
+  })
+
+  describe('silent practice across track changes', () => {
+    beforeEach(() => {
+      storage.getBpm.mockReturnValue(120)
+      playTrack('1')
+      viewModel.setMode('silent')
+      viewModel.toggle()
+      clock.start.mockClear()
+      metronome.start.mockClear()
+    })
+
+    it('carries on with the new track when its bpm is stored', () => {
+      storage.getBpm.mockReturnValue(90)
+      playTrack('2')
+      expect(state()).toMatchObject({ mode: 'silent', isRunning: true, bpm: 90 })
+      expect(clockOptions()).toMatchObject({ startMs: 0, loop: null })
+      expect(metronome.start).toHaveBeenCalledWith(90, 0)
+    })
+
+    it('waits for the fetched bpm and then carries on', async () => {
+      storage.getBpm.mockReturnValue(null)
+      let resolveLookup: (tempo: number) => void = () => {}
+      bpmService.getBpm.mockReturnValueOnce(new Promise((resolve) => (resolveLookup = resolve)))
+      playTrack('2')
+      expect(state()).toMatchObject({ isRunning: false, lookupStatus: 'loading' })
+      expect(clock.start).not.toHaveBeenCalled()
+
+      resolveLookup(100)
+      await vi.waitFor(() => expect(state().isRunning).toBe(true))
+      expect(state().bpm).toBe(100)
+      expect(clock.start).toHaveBeenCalledTimes(1)
+    })
+
+    it('stays stopped when no bpm is found, and starts once the user sets one', async () => {
+      storage.getBpm.mockReturnValue(null)
+      bpmService.getBpm.mockResolvedValueOnce(null)
+      playTrack('2')
+      await vi.waitFor(() => expect(state().lookupStatus).toBe('notFound'))
+      expect(state().isRunning).toBe(false)
+
+      viewModel.setBpm(110)
+      expect(state()).toMatchObject({ isRunning: true, bpm: 110 })
+      expect(clock.start).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not start a session that was stopped before the track changed', () => {
+      viewModel.toggle()
+      clock.start.mockClear()
+      playTrack('2')
+      expect(state().isRunning).toBe(false)
+      expect(clock.start).not.toHaveBeenCalled()
+    })
+
+    it('does not resume after the user stops or changes mode while the bpm loads', async () => {
+      storage.getBpm.mockReturnValue(null)
+      let resolveLookup: (tempo: number) => void = () => {}
+      bpmService.getBpm.mockReturnValueOnce(new Promise((resolve) => (resolveLookup = resolve)))
+      playTrack('2')
+      viewModel.setMode('withSong')
+      resolveLookup(100)
+      await vi.waitFor(() => expect(state().bpm).toBe(100))
+      expect(clock.start).not.toHaveBeenCalled()
+      expect(state().isRunning).toBe(false)
+    })
+
+    it('goes back to the song, without a silent session, when Spotify plays the new track', () => {
+      storage.getBpm.mockReturnValue(90)
+      playTrack('2', { isPlaying: true })
+      expect(state().mode).toBe('withSong')
+      expect(clock.start).not.toHaveBeenCalled()
     })
   })
 })

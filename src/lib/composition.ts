@@ -17,6 +17,7 @@ import { createBookmarkViewModel } from '$lib/viewmodels/BookmarkViewModel'
 import { createCallbackViewModel } from '$lib/viewmodels/CallbackViewModel'
 import { createLyricsViewModel } from '$lib/viewmodels/LyricsViewModel'
 import { createMetronomeViewModel } from '$lib/viewmodels/MetronomeViewModel'
+import { createShortcutsViewModel } from '$lib/viewmodels/ShortcutsViewModel'
 import { createPlayerViewModel } from '$lib/viewmodels/PlayerViewModel'
 import { createPlaylistViewModel } from '$lib/viewmodels/PlaylistViewModel'
 
@@ -33,10 +34,6 @@ export const playerViewModel = createPlayerViewModel(
   authViewModel,
 )
 export const bookmarkViewModel = createBookmarkViewModel(new BookmarkStorageService())
-export const bookmarkEditorViewModel = createBookmarkEditorViewModel(
-  bookmarkViewModel,
-  playerViewModel,
-)
 export const metronomeViewModel = createMetronomeViewModel(
   playerViewModel,
   new ReccoBeatsBpmService(),
@@ -44,6 +41,12 @@ export const metronomeViewModel = createMetronomeViewModel(
   new WebAudioMetronomeService(),
   new PracticeClock(),
 )
+// Loop start/end are captured from the practice position while practising without the song
+export const bookmarkEditorViewModel = createBookmarkEditorViewModel(bookmarkViewModel, {
+  ...playerViewModel,
+  getCurrentPositionMs: async () =>
+    metronomeViewModel.currentPracticePositionMs() ?? playerViewModel.getCurrentPositionMs(),
+})
 
 const lyricsPositionMs = derived(
   [metronomeViewModel.practicePositionMs, playerViewModel.displayPositionMs],
@@ -55,6 +58,13 @@ export const lyricsViewModel = createLyricsViewModel(
   new LyricsStorageService(),
 )
 export const playlistViewModel = createPlaylistViewModel(apiService)
+export const shortcutsViewModel = createShortcutsViewModel(
+  playerViewModel,
+  metronomeViewModel,
+  bookmarkViewModel,
+  bookmarkEditorViewModel,
+  playlistViewModel,
+)
 export const callbackViewModel = createCallbackViewModel(
   window.location.search,
   import.meta.env.BASE_URL,

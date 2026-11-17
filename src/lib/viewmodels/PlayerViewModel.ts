@@ -30,6 +30,8 @@ export interface PlayerViewModel {
   init(): Promise<void>
   destroy(): void
   playTrack(track: SpotifyTrack): Promise<void>
+  // Makes `track` the current one without starting Spotify, for practising silently
+  selectTrackWithoutPlaying(track: SpotifyTrack): void
   togglePlay(): Promise<void>
   seek(positionMs: number): Promise<void>
   scrubTo(positionMs: number): void
@@ -54,6 +56,8 @@ export function createPlayerViewModel(
   const stateStore = writable<PlayerState>({ ...INITIAL_PLAYER_STATE })
   let isInitialised = false
   let pendingTrackId: string | null = null
+  // The SDK still holds the previous track, so its reports are ignored until this one plays
+  let withheldTrackId: string | null = null
   let scrubTimer: ReturnType<typeof setTimeout> | null = null
   let lastScrubSeekMs: number | null = null
 
@@ -146,6 +150,10 @@ export function createPlayerViewModel(
         stateStore.update((s) => ({ ...s, isReady: false, deviceId: null }))
       },
       onPlaybackChanged: (snapshot) => {
+        if (withheldTrackId !== null) {
+          if (snapshot.track?.id !== withheldTrackId) return
+          withheldTrackId = null
+        }
         stateStore.update((s) => ({
           ...s,
           positionMs: snapshot.positionMs,
@@ -190,6 +198,7 @@ export function createPlayerViewModel(
       cancelScrubTimer()
       lastScrubSeekMs = null
       pendingTrackId = null
+      withheldTrackId = null
       playerService.disconnect()
       isInitialised = false
       stateStore.set({ ...INITIAL_PLAYER_STATE })
@@ -208,11 +217,32 @@ export function createPlayerViewModel(
         return setPlaybackError(`Kunne ikke spille av låten: ${describe(error)}`)
       }
 
+      withheldTrackId = null
       loopEngine.stopLoop()
       stateStore.update((s) => ({ ...s, track, activeLoop: null }))
     },
 
+    selectTrackWithoutPlaying(track: SpotifyTrack) {
+      pendingTrackId = null
+      withheldTrackId = track.id
+      loopEngine.stopLoop()
+      cancelScrubTimer()
+      lastScrubSeekMs = null
+      stateStore.update((s) => ({
+        ...s,
+        track,
+        activeLoop: null,
+        positionMs: 0,
+        durationMs: track.duration_ms,
+        scrubPositionMs: null,
+        playbackError: null,
+      }))
+    },
+
     async togglePlay() {
+      const { track } = get(stateStore)
+      // Resuming would play the SDK's old track, so start the selected one instead
+      if (withheldTrackId !== null && track) return this.playTrack(track)
       try {
         if (get(stateStore).isPlaying) await playerService.pause()
         else await playerService.resume()
