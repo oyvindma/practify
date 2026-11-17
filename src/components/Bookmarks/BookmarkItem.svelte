@@ -10,17 +10,25 @@
   let { bookmark }: Props = $props()
 
   const { playerState, toggleLoop, togglePlay, seek } = playerViewModel
-  const { deleteBookmark } = bookmarkViewModel
+  const { deleteBookmark, selectBookmark, selectedBookmarkId } = bookmarkViewModel
   const { beginEditing } = bookmarkEditorViewModel
 
   const isActive = $derived($playerState.activeLoop?.id === bookmark.id)
   const isPlaying = $derived($playerState.isPlaying)
+  const isSelected = $derived($selectedBookmarkId === bookmark.id)
+
+  let element: HTMLDivElement | undefined = $state()
+
+  $effect(() => {
+    if (isSelected) element?.scrollIntoView({ block: 'nearest' })
+  })
 </script>
 
 <div
+  bind:this={element}
   class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors {isActive
     ? 'bg-green-900/40 ring-1 ring-green-500'
-    : 'bg-gray-700 hover:bg-gray-600'}"
+    : 'bg-gray-700 hover:bg-gray-600'} {isSelected ? 'outline outline-2 outline-sky-400' : ''}"
 >
   <div class="flex-1 min-w-0">
     <p class="text-sm font-medium text-white truncate">{bookmark.name}</p>
@@ -61,7 +69,10 @@
   {/if}
 
   <button
-    onclick={() => toggleLoop(bookmark)}
+    onclick={() => {
+      selectBookmark(bookmark.id)
+      toggleLoop(bookmark)
+    }}
     class="px-2.5 py-1 rounded text-xs font-medium transition-colors shrink-0 {isActive
       ? 'bg-green-500 text-black'
       : 'bg-gray-600 hover:bg-gray-500 text-white'}"

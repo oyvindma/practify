@@ -1,56 +1,104 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { appViewModel, playerViewModel, playlistViewModel } from '$lib/composition'
+  import {
+    appViewModel,
+    playerViewModel,
+    playlistViewModel,
+    shortcutsViewModel,
+  } from '$lib/composition'
+  import { toKeyPress } from '$lib/dom/keyPress'
+  import { resolveShortcut } from '$lib/models/shortcuts'
   import LoginButton from './components/Auth/LoginButton.svelte'
   import PlaylistPicker from './components/Playlist/PlaylistPicker.svelte'
   import TrackList from './components/Playlist/TrackList.svelte'
   import PlayerControls from './components/Player/PlayerControls.svelte'
   import BookmarkList from './components/Bookmarks/BookmarkList.svelte'
   import BookmarkEditor from './components/Bookmarks/BookmarkEditor.svelte'
+  import MetronomePanel from './components/Metronome/MetronomePanel.svelte'
+  import LyricsPanel from './components/Lyrics/LyricsPanel.svelte'
+  import ShortcutsHelp from './components/Shortcuts/ShortcutsHelp.svelte'
   import Callback from './routes/callback/Callback.svelte'
 
   const { isCallbackRoute, isAuthenticated, start } = appViewModel
   const { playerState } = playerViewModel
   const { playlistState } = playlistViewModel
+  const { handleKey, toggleHelp } = shortcutsViewModel
 
+  let headerHeight = $state(0)
   let playerHeight = $state(0)
 
   onMount(start)
+
+  function onKeyDown(event: KeyboardEvent) {
+    if (event.defaultPrevented) return
+    if (handleKey(toKeyPress(event))) event.preventDefault()
+  }
+
+  // Buttons activate on Space release in some browsers, so the release is cancelled too
+  function onKeyUp(event: KeyboardEvent) {
+    if (resolveShortcut(toKeyPress(event)) === 'togglePlay') event.preventDefault()
+  }
 </script>
+
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 {#if isCallbackRoute}
   <Callback />
 {:else}
+  <ShortcutsHelp />
   <div class="min-h-screen bg-gray-950 text-white flex flex-col">
     <!-- Header -->
     <header
+      bind:clientHeight={headerHeight}
       class="sticky top-0 z-50 bg-gray-950/90 backdrop-blur px-4 py-3 flex items-center justify-between shrink-0"
     >
       <div class="flex items-center gap-2">
         <span class="text-green-500 text-xl">🎸</span>
         <h1 class="font-bold text-lg">Spotify Practice</h1>
       </div>
-      <LoginButton />
+      <div class="flex items-center gap-3">
+        {#if $isAuthenticated}
+          <button
+            type="button"
+            onclick={toggleHelp}
+            class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded-full transition-colors"
+            title="Hurtigtaster (?)"
+            aria-label="Vis hurtigtaster"
+          >
+            ?
+          </button>
+        {/if}
+        <LoginButton />
+      </div>
     </header>
 
     {#if $isAuthenticated}
       <!-- ── WIDE LAYOUT (lg+) ─────────────────────────────────────── -->
       <!-- Two independent flex columns; loop list min-height mirrors the player via bind:clientHeight -->
       <div class="hidden lg:flex flex-1 min-h-0">
-        <!-- Left column -->
-        <div class="flex flex-col flex-1 min-h-0">
+        <!-- Left column: pinned to the viewport below the header so the lyrics stay on screen -->
+        <div
+          class="flex flex-col flex-1 min-h-0 self-start sticky"
+          style="top: {headerHeight}px; height: calc(100vh - {headerHeight}px)"
+        >
           <!-- Player: fixed height, measured for use as min-height on loop list -->
           <div class="shrink-0 p-5" bind:clientHeight={playerHeight}>
             <PlayerControls />
           </div>
-          <!-- Track list: scrolls independently -->
-          <div class="flex-1 overflow-y-auto p-5">
+          <!-- Track list: takes what it needs but shrinks before the lyrics lose height; the list itself scrolls -->
+          <div class="flex-initial min-h-0 flex flex-col p-5">
             {#if $playlistState.selectedPlaylist}
-              <TrackList />
+              <TrackList fill />
             {:else}
-              <PlaylistPicker />
+              <PlaylistPicker fill />
             {/if}
           </div>
+          <!-- Lyrics: use the remaining height, never less than 35vh of text plus panel chrome -->
+          {#if $playerState.track}
+            <div class="flex-1 flex flex-col min-h-[calc(35vh+5.25rem)] px-5 pb-5">
+              <LyricsPanel fill />
+            </div>
+          {/if}
         </div>
 
         <!-- Right column -->
@@ -71,6 +119,11 @@
               <p class="text-gray-500 text-sm">Spill en låt for å lagre loops.</p>
             {/if}
           </div>
+          {#if $playerState.track}
+            <div class="shrink-0 px-5 pb-5">
+              <MetronomePanel />
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -78,7 +131,14 @@
       <main class="lg:hidden max-w-2xl mx-auto w-full px-4 py-6 space-y-6">
         <PlayerControls />
         {#if $playerState.track}
-          <BookmarkList />
+          <div class="space-y-6">
+            <BookmarkList />
+            <MetronomePanel />
+            <!-- Pinned to the bottom of the viewport while this section is on screen -->
+            <div class="sticky bottom-0 z-10 bg-gray-950 pb-4 pt-2">
+              <LyricsPanel />
+            </div>
+          </div>
         {/if}
         {#if $playlistState.selectedPlaylist}
           <TrackList />

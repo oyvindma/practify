@@ -1,6 +1,13 @@
 <script lang="ts">
   import { playlistViewModel } from '$lib/composition'
 
+  interface Props {
+    // Fill the height given by the parent (the list scrolls) instead of using a fixed maximum
+    fill?: boolean
+  }
+
+  let { fill = false }: Props = $props()
+
   const { playlistState, loadPlaylists, selectPlaylist } = playlistViewModel
 
   $effect(() => {
@@ -8,7 +15,7 @@
   })
 </script>
 
-<div class="p-4 bg-gray-900 rounded-xl">
+<div class="p-4 bg-gray-900 rounded-xl {fill ? 'flex flex-col flex-1 min-h-0' : ''}">
   <h2 class="text-lg font-semibold mb-3 text-white">Spillelister</h2>
 
   {#if $playlistState.isLoadingPlaylists}
@@ -18,7 +25,7 @@
   {:else if $playlistState.playlists.length === 0}
     <p class="text-gray-400 text-sm">Ingen spillelister funnet.</p>
   {:else}
-    <ul class="space-y-1 max-h-72 overflow-y-auto">
+    <ul class="space-y-1 overflow-y-auto {fill ? 'flex-1 min-h-0' : 'max-h-72'}">
       {#each $playlistState.playlists as playlist (playlist.id)}
         <li>
           <button
